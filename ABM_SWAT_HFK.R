@@ -13,10 +13,6 @@ while(n<22) #SWAT simulation period: 22 years
   while (file.exists("SWAT_flag.txt"))
   {
   }
-
-  v<-scan(file="data_exchange.txt","r") #receive the value of state variable of the simulation model at the end of year n and output them
-  message<-paste("Value of state variable in SWAT at the end of year",n,"is:",v)
-  write(message,"")
   
   #Streamflow
   flow_mekong <- read.table("Flow_Mekong.txt")
