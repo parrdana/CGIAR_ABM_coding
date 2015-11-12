@@ -21,17 +21,17 @@ while(n<22) #SWAT simulation period: 22 years
   
   initcrops<-read.table("Crop_initial.txt",header = FALSE, sep = "")
   colnames(initcrops) <- c("SB_ID","HRU_ID","Area","PlantDate","PotIrri","Irri_TS","Irri_eff")
-  i_rice_area <- initcrops[,3][seq(1, length(initcrops[,3]), 8)]
-  r_rice_area <- initcrops[,3][seq(2, length(initcrops[,3]), 8)]
-  i_upl_area <- initcrops[,3][seq(3, length(initcrops[,3]), 8)]
-  r_upl_area <- initcrops[,3][seq(4, length(initcrops[,3]), 8)]
+  irice_area <- initcrops[,3][seq(1, length(initcrops[,3]), 8)]
+  rrice_area <- initcrops[,3][seq(2, length(initcrops[,3]), 8)]
+  iupl_area <- initcrops[,3][seq(3, length(initcrops[,3]), 8)]
+  rupl_area <- initcrops[,3][seq(4, length(initcrops[,3]), 8)]
   forest_area <- initcrops[,3][seq(5, length(initcrops[,3]), 8)]
   grass_area <- initcrops[,3][seq(6, length(initcrops[,3]), 8)]
   urban_area <- initcrops[,3][seq(7, length(initcrops[,3]), 8)]
   wetland_area <- initcrops[,3][seq(8, length(initcrops[,3]), 8)]
   
   #for now all hru's are initialized with same irr_eff and all reservoirs with the same starg and ndtargr so no need to extract data
-   res_ini <- read.csv(file="resini.csv")
+  res_ini <- read.csv(file="Reservoir_initial.txt")
   irr_eff<-vector(,nohru) 
   irr_eff[]<-0.5
   starg<-matrix(nrow=nores, ncol=12)
@@ -82,75 +82,112 @@ while(n<22) #SWAT simulation period: 22 years
   # calculate water availability for domestic use
   # calculate water availability for industrial use
   # ecosystem requirements
-
+  
   ############################################################################################################################
   ############################################################################################################################
-  # Loops through agents, subbasins, HRU's and reservoir
+  # Loops through agents, subbasins, HRU's and reservoir and ecosystem
   ############################################################################################################################
   ############################################################################################################################
   
+  #number of agents
+  aaa<-1:12
+  
+  #number of subbasin in each agent
+  ss<-rep(0,12);ss[1]<-9;ss[2]<-2;ss[3]<-1;ss[4]<-6;ss[5]<-1;ss[6]<-6;ss[7]<-3;ss[8]<-5;ss[9]<-6;ss[10]<-2;ss[11]<-3;ss[12]<-3;
+  
+  #number of reseviors in each agent
+  rr<-rep(0,12);rr[1]<-4;rr[2]<-0;rr[3]<-0;rr[4]<-2;rr[5]<-1;rr[6]<-1;rr[7]<-0;rr[8]<-1;rr[9]<-1;rr[10]<-0;rr[11]<-0;rr[12]<-0;
+  
+  #number of ecosystem hotspots in each agent
+  #ee<-rep(0,12);ee[1]<-10;ee[2]<-2;ee[3]<-1;ee[4]<-7;ee[5]<-2;ee[6]<-12;ee[7]<-4;ee[8]<-5;ee[9]<-13;ee[10]<-2;ee[11]<-3;ee[12]<-3;
+  ee<-rep(3,12)#temporary
+  
+  #number of HRU within each agent and subbasin
+  hh<-matrix(rep(8,108),12)#12agents*9subbasins(max # of subbasins in an agent)=108
+  
+  sn=0#for continuous subbasin index
+  hn=0#for continuous HRU index
+  rn=0#for continuous resevior index
   for (a in aaa){#agent loop
     message<-paste("agent=",a)
     write(message,"")
-
+    sss<-1:ss[a]#index for subbasin loop for specific agent "a"
+    rrr<-1:rr[a]#index for reservior loop
+    eee<-1:ee[a]#index for ecosystem hotspot loop
+    
     for (s in sss){#subbasin loop
+      sn=sn+1#which subbasin out of 47 model is currently on
       message<-paste("subbasin=",s)
       write(message,"")
-
+      hhh<-1:hh[a,s]#index for HRU loop
+      
       for (h in hhh){#HRU loop
+        hn=hn+1#which HRU out of 376 model is currently on
         message<-paste("HRU=",h)
         write(message,"")
+
+        if (h==1){#irrigated rice
+          ####################################################
+          #if-then-else decision making at the HRU level
+          #if (cy < min_cy[hn]){irr.eff[hn] <- irr.eff[hn]*1.1} else {}
         
-        ####################################################
-        #if-then-else decision making at the HRU level
-        if (cy < min_cy[h]){irr.eff[h] <- irr.eff[h]*1.1} else {}
-        
-        if (cprod < min_cprod[h]){
-          irr.eff[h] <- irr.eff[h]*1.1
-          croparea[h] <- min(max_croparea[h],croparea[h]*1.1)
-        } else {}
+          #if (cprod < min_cprod[hn]){
+          #  irr.eff[hn] <- irr.eff[hn]*1.1
+          #  irice_area[sn] <- min(max_irice_area[sn],irice_area[sn]*1.1)
+          #} else {}
+        }
+        if (hh==3){#irrigated upland crop
+          #if (cy < min_cy[hn]){irr.eff[hn] <- irr.eff[hn]*1.1} else {}
+          
+          #if (cprod < min_cprod[hrn]){
+          #  irr.eff[hn] <- irr.eff[hn]*1.1
+          #  iupl_area[sn] <- min(max_iupl_area[sn],iupl_area[sn]*1.1)
+          #} else {}
+        }
         
       }#end HRU
     }#end subbasin
-    
-    for (r in rrr){#reservoir loop
-      message<-paste("reservoir=",r)
-      write(message,"")
+    if (rr[a]!=0){
+      for (r in rrr){#reservoir loop
+        rn=rn+1#which reservior out of 10 the model is currently on
+        message<-paste("reservoir=",r)
+        write(message,"")
+
       
-      #####################################################
-      hydpow[r] <- streamflow * drop_hydpow[r]
+        #####################################################
+        #hydpow[rn] <- streamflow * drop_hydpow[rn]
       
-      if (hydpow[r] < min_hydpow[r]){
-        resvol[r] <- resvol[r]*0.9 # if hydropower generated is less than the minimum constraint, release more water from reservoir storage
-      } else {}
-      
-      
-    }#end reservoir
+        #if (hydpow[rn] < min_hydpow[rn]){
+        #  resvol[rn] <- resvol[rn]*0.9 # if hydropower generated is less than the minimum constraint, release more water from reservoir storage
+        #} else {}
+  
+      }#end reservoir
+    }#end if !0
     
     for (e in eee){#ecosystem loop
       message<-paste("ecosystem=",e)
       write(message,"")
       
-
+      
     }#end ecosystem
     
     #########################################################
     #save decision results for each agent
-
+    
     
   }#end agent
   
-############################################################################################################################
-############################################################################################################################
-# Write ABM output (SWAT input) to data file
-############################################################################################################################
-############################################################################################################################
-
+  ############################################################################################################################
+  ############################################################################################################################
+  # Write ABM output (SWAT input) to data file
+  ############################################################################################################################
+  ############################################################################################################################
+  
   res<-cbind(starg,ndtargr)
-  land_area<-cbind(i_rice_area,r_rice_area,i_upl_area,r_upl_area,forest_area,grass_area,urban_area,wetland_area)
+  land_area<-cbind(irice_area,rrice_area,iupl_area,rupl_area,forest_area,grass_area,urban_area,wetland_area)
   write.table(irr_eff,file="Irr_eff_by_R.txt",col.names = F, row.names = F)
   write.table(res,file="Reservoir_by_R.txt", col.names = F, row.names = F) 
-  write.table(land_area,file="Landclass_Area_by_R.txt", col.names = F, row.names = F) 
+  write.table(land_area,file="HRU_Area_by_R.txt", col.names = F, row.names = F) 
   
   file.create("SWAT_flag.txt")
   n<-n+1
