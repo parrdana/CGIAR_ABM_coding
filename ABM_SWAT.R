@@ -32,7 +32,7 @@ while(n<22) #SWAT simulation period: 22 years
   irr_eff <- crop_ini[,7]
   
   res_ini <- read.table(file="Reservoir_initial.txt")
-  starg <- res_ini[,4:17]
+  starg <- res_ini[,6:17]
   ndtargr <- res_ini[,18]
   
   
@@ -71,11 +71,12 @@ while(n<22) #SWAT simulation period: 22 years
   
   #min_cy: this will be a dataframe that provides a minimum constraint on crop yield for each HRU where there is cropping
   #min_cprod: this will be a dataframe that provides a minimum constraint on crop production for each HRU where there is cropping
+  #tar_hydpow: this will be a dataframe that provides a target value on hydropower for each reservoir
   #min_hydpow: this will be a dataframe that provides a minimum constraint on hydropower for each reservoir
   #min_starg: this will be a dataframe that provides a minimum constraint on reservoir target storage
-  #max_starg: this will be a dataframe that provides a maxmum constraint (capacity) on reservoir target storage
   #min_ndtargr: this will be a dataframe that provides a minimum number of days to reach target storage
-  #min_wetstor: this will be a dataframe that provides a minimum constraint on wetland storage
+  #tar_ndtargr: this will be a dataframe that provides a target value for which we would like to set a target storage
+  #tar_wetstor: this will be a dataframe that provides an target value for wetland storage
   #max_wetstor: this will be a dataframe that provides a maxmum constraint on wetland storage (might need for very wet years?, might not be necessary if consistently drying)
   
   ################################
@@ -84,6 +85,23 @@ while(n<22) #SWAT simulation period: 22 years
   # calculate water availability for domestic use
   # calculate water availability for industrial use
   # ecosystem requirements
+  
+  #do we plan to include all ecosystem services from survey?:
+  #Water for irrigated staples (e.g. rice, maize)
+  #Water for irrigated cash crops (e.g. sugarcane)
+  #Water for irrigated horticultural crops (e.g. vegetables, fruits)
+  #Water for fiber
+  #Water for energy (e.g. hydropower)
+  #Water for domestic water supply
+  #Water for industrial water supply
+  #Navigation
+  #Fisheries/acquaculture
+  #Environmental flows to maintain water-based ecosystems
+  #Water for important cultural purposes
+  #Water to support protected areas
+  #Water to support nature and other items of religious and cultural significance
+  #Water for wetland uses (e.g. aquatic species, regulation of floods, regulation of water quality)
+  #Control of sedimentation and soil erosion
   
   ############################################################################################################################
   ############################################################################################################################
@@ -132,7 +150,7 @@ while(n<22) #SWAT simulation period: 22 years
           ####################################################
           #if-then-else decision making at the HRU level
           if (cy[hn] < min_cy[hn]){irr.eff[hn] <- irr.eff[hn]*1.1} else {}
-          eff_cost[hn] <- (irr.eff*.1)*costfactor #cost of changing irr_eff should be recorded
+          eff_cost[hn] <- (irr.eff[hn]*.1)*costfactor #cost of changing irr_eff should be recorded
           
           if (cprod[hn] < min_cprod[hn]){
             irr.eff[hn] <- irr.eff[hn]*1.1
@@ -170,8 +188,57 @@ while(n<22) #SWAT simulation period: 22 years
           } else {}
         }
         
+        #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        #!!!!!!  Do we want to set a minimum (as written above)
+        #!!!!!!  Or do we want to see if yeild/production are below a long term average (as written below)
+        #!!!!!!  Or both with more/less strict decisions? or minimum for first 5 years then use long term ave after that?
+        #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+        if (h==1){#irrigated rice
+          ####################################################
+          #if-then-else decision making at the HRU level
+          if (cy[hn] < ltave_cy[hn]){irr.eff[hn] <- irr.eff[hn]*1.05} else {}
+          eff_cost[hn] <- (irr.eff[hn]*.05)*costfactor #cost of changing irr_eff should be recorded
+          
+          if (cprod[hn] < min_cprod[hn]){
+            irr.eff[hn] <- irr.eff[hn]*1.05
+            eff_cost[hn] <- (irr.eff[hn]*.05)*costfactor #cost of changing irr_eff should be recorded
+            change_area <- min(max_irice_area[sn],irice_area[sn]*1.05)-irice_area[sn]#area added to irice must be taken from another HRU
+            irice_area[sn] <- min(max_irice_area[sn],irice_area[sn]*1.05)
+            
+            #which HRU's the additional crop area is taken from (weights add to 1) should depend on survey?
+            rrice_area[sn] <- rrice_area[sn]-change_area*weight1
+            rupl_area[sn] <- rupl_area[sn]-change_area*weight2
+            forest_area[sn] <- forest_area[sn]-change_area*weight3
+            grass_area[sn] <- grass_area[sn]-change_area*weight4
+            #urban_area <- probably can't take from urban?
+            #wetland_area <- probably don't want to take from wetland?
+            
+          } else {}
+        }
+        if (hh==3){#irrigated upland crop
+          if (cy[hn] < ltave_cy[hn]){irr.eff[hn] <- irr.eff[hn]*1.05} else {}
+          
+          if (cprod[hn] < min_cprod[hn]){
+            irr.eff[hn] <- irr.eff[hn]*1.05
+            eff_cost[hn] <- (irr.eff[hn]*.05)*costfactor #cost of changing irr_eff should be recorded
+            change_area <- min(max_iupl_area[sn],iupl_area[sn]*1.05)-iupl_area[sn]#area added to irice must be taken from another HRU
+            iupl_area[sn] <- min(max_iupl_area[sn],iupl_area[sn]*1.05)
+            
+            #which HRU's the additional crop area is taken from (weights add to 1) should depend on survey?
+            rrice_area[sn] <- rrice_area[sn]-change_area*weight1
+            rupl_area[sn] <- rupl_area[sn]-change_area*weight2
+            forest_area[sn] <- forest_area[sn]-change_area*weight3
+            grass_area[sn] <- grass_area[sn]-change_area*weight4
+            #urban_area <- probably can't take from urban?
+            #wetland_area <- probably don't want to take from wetland?
+            
+          } else {}
+        }
+        
       }#end HRU
     }#end subbasin
+    
     if (rr[a]!=0){
       for (r in rrr){#reservoir loop
         rn=rn+1#which reservior out of 10 the model is currently on
@@ -179,29 +246,49 @@ while(n<22) #SWAT simulation period: 22 years
         write(message,"")
         
         #####################################################
-        if (starg[rn] > max_starg[rn]){
-          starg[rn] <- min(starg[rn]*0.9,max_starg[rn])
-        } else{}
+        #SWAT should deal with making sure maximum capacity is not broken?
         
-        if (starg[rn] < min_starg[rn]){
-          starg[rn] <- max(min_starg[rn],starg[rn]*1.1)
-        } else{}
+        #so we are decreasing ndtarg and starg in hydropower decisions below-> when/how will they be increased?
+        # should come before hydropower?
         
-        #which of these two (min storage/hydropower) takes priority based on survey results? for the agent containing the reservoir
+        for (m in 1:12){
+          if (ave_vol[rn,m] > starg[rn,m]){#if ave vol in month is greater than target for that month
+            starg[rn,m] <- ave_vol[rn,m]
+          }
+        }
+        
+        if (ndr[rn] > ndtargr){#if number of days at or above target storage is greater than target number of days
+          ndtargr[rn] <- ndr[rn]
+        }
         
         hydpow[rn] <- streamflow * drop_hydpow[rn]
         
-        if (hydpow[rn] < min_hydpow[rn]){
-          if (starg[rn]*.9 > min_starg[rn]){
-            starg[rn] <- starg[rn]*0.9# if hydropower generated is less than the minimum constraint, release more water from reservoir storage
-            
-          }else{#if dropping storage drops it below minimum storage instead decrease number of target days at storage
+        if (hydpow[rn]< min_hydpow[rn]){
+          # if hydropower generated is less than the minimum,set target volume lower for every month 
+          # and decrease number of days required to reach target
+            starg[rn,] <- max(starg[rn,]*0.8,min_starg[rn]) 
             ndtargr[rn] <- max(ndtargr[rn]-2,min_ndtargr[rn])
+
+        }else if (hydpow[rn] < tar_hydpow[rn]){
+          # if hydropower generated is less than the target, set target volume lower (in dry season) or decrease days required for target
+          if (starg[rn,-(4:10)]*.9 > min_starg[rn,-(4:10)]){ # -(4:10) is dry season)
+            starg[rn,-(4:10)] <- starg[rn,-(4:10)]*0.9 
+            
+          }else{#if dropping target storage drops it below minimum target storage instead decrease number of target days at storage if possible
+              ndtargr[rn] <- max(ndtargr[rn]-1,min_ndtargr[rn])
           }
-          #if hydropower is still less than min, may want to repeat these loops until at min_starg and min_ndtargr? 
-          #(change "if" hydrow< to "while" and include: & > starg ndtargr minimums)
           
         } else {}
+        
+        #!!!!!!!!!!!!!!!Not sure if this part will be necessary or not- lets discuss!!!!!!!!!!!!!!!!!
+        #we are not allowing starg or ndtarg to drop below our minimum values however we may want to still 
+        #check if they are below an ideal value and if so act (e.g. written below)
+        #OR do we want to allow for the minimums to be broken (have only ideal values) and allow for them to be increased/decreased soley on survey weights?
+        #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+        if (ndtarg[rn]<tar_ndtargr[rn]){#if below what we would ideally like to set target days to
+          #decrease reservoir maximum ave daily outflow
+        }
         
         
       }#end reservoir
@@ -212,20 +299,33 @@ while(n<22) #SWAT simulation period: 22 years
       write(message,"")
       
       if (e==?){#wetlands
-        if (wetstor[a] < min_wetstor[a]){#probably indexed by agent as ecosystem services are specific to agent in survey
+        if (wetstor[a] < .25*tar_wetstor[a]){#probably indexed by agent as ecosystem services are specific to agent in survey
           #options(these may apply to a variety of ecosystem services):
-          #lower reservoir volume upstream?
-          #decrease maximum allowable water withdrawl?
-          #increase Minimum allowable flow in river reach (m3/s)?
+          #decrease reservoir target volume upstream?
+          #increase reservoir minimum daily outflow upstream?
+          #decrease maximum allowable water withdrawl from hru's?
+          #increase Minimum allowable flow in river reach?
           
         }else if (wetstor[a] > max_wetstor[a]){
           #optons: 
-          #increase target volume upstream (may affect hydropower minimum)?
+          #increase reservoir target volume upstream (may affect hydropower minimum)?
+          #decrease reservoir maximum daily outflow?
           #increase maximum allowable water widthdrawl?
-          #decrease Minimum allowable flow in river reach (m3/s)?
-          
+          #decrease minimum allowable flow in river reach?
         }
       }
+      
+      if (e==?){#streamflow in river reach- could apply to navigation, fisheries, environmental flows to maintain ecosystems etc...
+        if (streamflow < target_streamflow){#
+          #options:
+          #lower reservoir target volume upstream?
+          #increase reservoir minimum daily outflow?
+          #decrease maximum allowable water withdrawl?
+          #increase Minimum allowable flow in river reach (m3/s)?
+          
+        }else{}
+      }
+      
     }#end ecosystem
     
     #########################################################
