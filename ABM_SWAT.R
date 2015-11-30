@@ -22,19 +22,20 @@ while(n<22) #SWAT simulation period: 22 years
   ###################################################################################
   #ABM output variables initialization (SWAT input variables)
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  nosb<-47;nohru<-376;nores<-10;#number of subbasins, hru's, reservoirs
+  nosb<-47;nohru<-376;nores<-10;noyear=20#number of subbasins, hru's, reservoirs, years
   
   crop_hru <- read.table("Crop_initial.txt")
   colnames(crop_hru) <- c("SB_ID","HRU_ID","Area","PlantDate","PotIrri","Irri_TS","Irri_eff")
+
   if (n<=3){#year 3 is the first year of simulation (we do not want to reinitialize values as Crop_initial.txt will not be updated)
-    irice_area <- crop_hru[,3][seq(1, length(crop_ini[,3]), 8)]
-    rrice_area <- crop_hru[,3][seq(2, length(crop_ini[,3]), 8)]
-    iupl_area <- crop_hru[,3][seq(3, length(crop_ini[,3]), 8)]
-    rupl_area <- crop_hru[,3][seq(4, length(crop_ini[,3]), 8)]
-    forest_area <- crop_hru[,3][seq(5, length(crop_ini[,3]), 8)]
-    grass_area <- crop_hru[,3][seq(6, length(crop_ini[,3]), 8)]
-    urban_area <- crop_hru[,3][seq(7, length(crop_ini[,3]), 8)]
-    wetland_area <- crop_hru[,3][seq(8, length(crop_ini[,3]), 8)]
+    irice_area <- crop_hru[,3][seq(1, length(crop_hru[,3]), 8)]
+    rrice_area <- crop_hru[,3][seq(2, length(crop_hru[,3]), 8)]
+    iupl_area <- crop_hru[,3][seq(3, length(crop_hru[,3]), 8)]
+    rupl_area <- crop_hru[,3][seq(4, length(crop_hru[,3]), 8)]
+    forest_area <- crop_hru[,3][seq(5, length(crop_hru[,3]), 8)]
+    grass_area <- crop_hru[,3][seq(6, length(crop_hru[,3]), 8)]
+    urban_area <- crop_hru[,3][seq(7, length(crop_hru[,3]), 8)]
+    wetland_area <- crop_hru[,3][seq(8, length(crop_hru[,3]), 8)]
     irr_eff <- crop_hru[,7]
   }
 
@@ -53,7 +54,7 @@ while(n<22) #SWAT simulation period: 22 years
     left_join(crop_hru,by="SB_ID") %>% 
     select(Agent_ID,SB_ID,SB_Area,HRU_ID,Area:Irri_eff)
   
-  #######################################################################################################
+  ############################################
   #SWAT output variables (ABM input variables)
   ###### Streamflow 
   flow_mekong <- read.table("Flow_Mekong.txt")
@@ -75,6 +76,8 @@ while(n<22) #SWAT simulation period: 22 years
     separate(col=Att,into=c("Attr","Reservoir"),sep="_") %>%
     mutate(Reservoir = extract_numeric(Reservoir)) 
   
+  #note: reservoir 1 and 7 are not actually reservoirs- created due to issues with SWAT
+  
   ####### Crop yield
   crop_mekong  <- read.table("Crop_Mekong.txt")
   colnames(crop_mekong) <- c("year","SB_ID","HRU_ID","yield","IWW")
@@ -88,15 +91,25 @@ while(n<22) #SWAT simulation period: 22 years
   #min_cy: this will be a dataframe that provides a minimum constraint on crop yield for each HRU where there is cropping
   #min_cprod: this will be a dataframe that provides a minimum constraint on crop production for each HRU where there is cropping
   
-  readhydpow <- read.csv("reservoir_#_to_name_111815.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
-  mean_hydpow <- as.numeric(readhydpow$Mean.Annual.Energy..GW.) #(GW)
-  if (n<=3){min_hydpow <- mean_hydpow *0.9}#first year of simulation is year 3 --> set min at 90% of mean for now
+  
+  if (n<=3){#first year of simulation is year 3
+    readhydpow <- read.csv("reservoir_data_for_ABM.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
+    mean_hydpow <- as.numeric(readhydpow$Mean.Annual.Energy..GWh.) #(GWh)
+    min_hydpow <- mean_hydpow *0.8# set min at 80% of mean for now
+    res_eff <- readhydpow$Efficiency
+    res_a <- readhydpow$a
+    res_b <- readhydpow$b}
   if (n>3){min_hydpow <- min_hydpow*1.07}#increase 7% per year (first year of simulation is year 3)
   #power demands  expected to increase by about 7% per year between (2010 and 2030)
+  res_Q <- (colMeans(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:10)]))/86400;names(res_Q)<-paste0("Q_res",1:10)
+  #mean of daily flow converted to m3/s (from m3/day)
+  res_head <- colMeans(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b));names(res_head)<-paste0("head_res",1:10)
+  #mean head for the year for each reservoir
   
-  #head <- #net available head is necessary for hydpow
-  #hydpow = rho*g*Head*Q/1,000,000,000 for GW 
-
+  #hydpow = u*rho*g*H*Q/1,000,000,000 for GW (kgm^2/s^3*10*9) then *8760 to GWh
+  #u = efficiency (in general ranging 0.75 to 0.95)
+  hydpow <- (res_eff*1000*9.81*res_head*res_Q)/1000000000*8760;names(hydpow)<-paste0("hydpow_res",1:10)
+  
   ################################
   #Post-calculation for (From SWAT output) ecosystem services
   
@@ -104,6 +117,12 @@ while(n<22) #SWAT simulation period: 22 years
   # calculate water availability for industrial use
   # ecosystem requirements
   
+  ################################
+  #Read in survey weights for agriculture, hydropower, ecosystems
+  readweights <- read.csv("Survey_Retabulated.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
+  weights <- data.frame(readweights$Agriculture..,readweights$Hydropower..,readweights$Ecosystem.Services..)
+  colnames(weights)<-c("A_weight","H_weight","E_weight")
+
   ############################################################################################################################
   ############################################################################################################################
   # Loops through agents, subbasins, HRU's and reservoir and ecosystem
@@ -197,47 +216,75 @@ while(n<22) #SWAT simulation period: 22 years
         message<-paste("reservoir=",r)
         write(message,"")
         
-        hydpow[rn] <- sum(reservoir_mekong[which(reservoir_mekong$year==n),rn+22])*drop_hydpow[rn]
-        #hydpow = rho*g*H*Q/1,000,000,000 for GW 
-        hydpow[rn] <- 1000*9.8*head*sum(reservoir_mekong[which(reservoir_mekong$year==n),rn+22])
+        if (!is.na(min_hydpow[rn])){#for now some of the reservoirs are either not reservoirs but mistakes on SWAT side or have no 
+          #data from mrc such as (volume to head relationship, efficency) so ignore them
         
-        hptrigcount[rn] <- hptrigcount[rn]+1
+          hptrigcount[rn] <- hptrigcount[rn]+1
         
-        if (hydpow[rn]< min_hydpow[rn]){
-          #asign TRUE to most recent year and replace all other years with the value from the year before
-          hptrig[rn,10]<-hptrig[rn,9];hptrig[rn,9]<-hptrig[rn,8];hptrig[rn,8]<-hptrig[rn,7];hptrig[rn,7]<-hptrig[rn,6];hptrig[rn,6]<-hptrig[rn,5];hptrig[rn,5]<-hptrig[rn,4];hptrig[rn,4]<-hptrig[rn,3];hptrig[rn,3]<-hptrig[rn,2];hptrig[rn,2]<-hptrig[rn,1];hptrig[rn,1]<-TRUE;
-          if (all(hptrig[])==TRUE & hptrigcount[rn]>=10){#if hydropower generated is less than the minimum over last 10 years 
-            #decrease number of days required to reach target and target storage during dry season
-            starg[rn,-(4:10)] <- starg[rn,-(4:10)]*0.7
-            ndtargr[rn] <- ndtargr[rn]-2
-            hptrigcount[rn]=0#reset hydropower trigger count after changing reservoir managemnt practices to ensure it will not be changed for at least 10 more years (if ever again)
+          if (hydpow[rn]< min_hydpow[rn]){
             
-          }else if (sum(hptrig[rn,])==9 & hptrigcount[rn]>=10){#if hydropower generated is less than the minimum for 9 of last 10 years
-            #decrease number of days required to reach target and target storage to a lesser extent than for 10/10 years
-            starg[rn,-(4:10)] <- starg[rn,-(4:10)]*0.8
-            ndtargr[rn] <- ndtargr[rn]-1
-            hptrigcount[rn]=0#reset hydropower trigger count
+            #asign TRUE to most recent year and replace all other years with the value from the year before
+            hptrig[rn,10]<-hptrig[rn,9];hptrig[rn,9]<-hptrig[rn,8];hptrig[rn,8]<-hptrig[rn,7];hptrig[rn,7]<-hptrig[rn,6];hptrig[rn,6]<-hptrig[rn,5];hptrig[rn,5]<-hptrig[rn,4];hptrig[rn,4]<-hptrig[rn,3];hptrig[rn,3]<-hptrig[rn,2];hptrig[rn,2]<-hptrig[rn,1];hptrig[rn,1]<-TRUE;
+            if (all(hptrig[])==TRUE & hptrigcount[rn]>=10){#if hydropower generated is less than the minimum over last 10 years 
+              #decrease number of days required to reach target and target storage during dry season
+              starg[rn,-(4:10)] <- starg[rn,-(4:10)]*0.7
+              ndtargr[rn] <- ndtargr[rn]-4
+              hptrigcount[rn]=0#reset hydropower trigger count after changing reservoir managemnt practices to ensure it will not be changed for at least 10 more years (if ever again)
             
-          }else if (sum(hptrig[rn,])==8 & hptrigcount[rn]>=10){#if hydropower generated is less than the minimum for 8 of last 10 years
-            #decrease number of days required to reach target and target storage to a lesser extent than for 9/10 years
-            starg[rn,-(4:10)] <- starg[rn,-(4:10)]*0.9
-            ndtargr[rn] <- ndtargr[rn]-1
-            hptrigcount[rn]=0#reset hydropower trigger count
+            }else if (sum(hptrig[rn,])==9 & hptrigcount[rn]>=10){#if hydropower generated is less than the minimum for 9 of last 10 years
+              #decrease number of days required to reach target and target storage to a lesser extent than for 10/10 years
+              starg[rn,-(4:10)] <- starg[rn,-(4:10)]*0.8
+              ndtargr[rn] <- ndtargr[rn]-2
+              hptrigcount[rn]=0#reset hydropower trigger count
             
-          }else{}
+            }else if (sum(hptrig[rn,])==8 & hptrigcount[rn]>=10){#if hydropower generated is less than the minimum for 8 of last 10 years
+              #decrease number of days required to reach target and target storage to a lesser extent than for 9/10 years
+              starg[rn,-(4:10)] <- starg[rn,-(4:10)]*0.9
+              ndtargr[rn] <- ndtargr[rn]-2
+              hptrigcount[rn]=0#reset hydropower trigger count
+            
+            }else{}
           
-        }else{
-          #asign FALSE to most recent year and replace all other years with the value from the year before
-          hptrig[rn,10]<-hptrig[rn,9];hptrig[rn,9]<-hptrig[rn,8];hptrig[rn,8]<-hptrig[rn,7];hptrig[rn,7]<-hptrig[rn,6];hptrig[rn,6]<-hptrig[rn,5];hptrig[rn,5]<-hptrig[rn,4];hptrig[rn,4]<-hptrig[rn,3];hptrig[rn,3]<-hptrig[rn,2];hptrig[rn,2]<-hptrig[rn,1];hptrig[rn,1]<-FALSE;
-        }
-        
+          }else{
+            #asign FALSE to most recent year and replace all other years with the value from the year before
+            hptrig[rn,10]<-hptrig[rn,9];hptrig[rn,9]<-hptrig[rn,8];hptrig[rn,8]<-hptrig[rn,7];hptrig[rn,7]<-hptrig[rn,6];hptrig[rn,6]<-hptrig[rn,5];hptrig[rn,5]<-hptrig[rn,4];hptrig[rn,4]<-hptrig[rn,3];hptrig[rn,3]<-hptrig[rn,2];hptrig[rn,2]<-hptrig[rn,1];hptrig[rn,1]<-FALSE;
+          }
+        }#end if nan
       }#end reservoir
     }#end if !0
-    
-    #########################################################
-    #save decision results for each agent
-    
+
   }#end agent
+  
+  #########################################################
+  #save decision variables for each year for later analysis
+  #way this is written now basically just combines all years of simulation and writes similarly as for SWAT input only including year
+ 
+  if (n==3){#year 3 is the first year of simulation
+    res_save_old <- cbind(n-2,starg,ndtargr)
+    irr_eff_save_old <- cbind(n-2,irr_eff)
+    area_save_old<-cbind(n-2,irice_area,rrice_area,iupl_area,rupl_area,forest_area,grass_area,urban_area,wetland_area)
+  }
+  
+  if(n>3){
+    res_save_new <- cbind(n-2,starg,ndtargr)
+    res_save <- rbind(res_save_old,res_save_new)
+    res_save_old <- res_save
+    
+    irr_eff_save_new <- cbind(n-2,irr_eff)
+    irr_eff_save <- rbind(irr_eff_save_old,irr_eff_save_new)
+    irr_eff_save_old <- irr_eff_save
+    
+    area_save_new <- cbind(n-2,irice_area,rrice_area,iupl_area,rupl_area,forest_area,grass_area,urban_area,wetland_area)
+    area_save <- rbind(area_save_old,area_save_new)
+    area_save_old <- area_save
+  }
+  
+  if(n==noyear+2){#if last year of simluation write out decision variables
+    write.table(irr_eff_save,file="save_irr_eff.txt",col.names = F, row.names = F)
+    write.table(res_save,file="save_res.txt",col.names = F, row.names = F)
+    write.table(area_save,file="save_HRU_Area.txt",col.names = F, row.names = F)
+
+  }
   
   ############################################################################################################################
   ############################################################################################################################
