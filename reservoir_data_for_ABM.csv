@@ -1,4 +1,4 @@
-Reservoir,lat,lon,subbasin (090715 setup),Reservoir name,Mean Annual Energy (GWh),Efficiency,a,b,Note
+Reservoir,lat,lon,subbasin,Reservoir name,Mean Annual Energy (GWh),Efficiency,a,b,Note
 1,27.625964,99.018853,4,,,,,,Head=a*volume^b
 2,26.548199,99.103817,5,Huangdeng,"8,578",,,,
 3,24.704222,100.091255,6,Xiaowan,18207,0.74,0.3726,0.2817,
