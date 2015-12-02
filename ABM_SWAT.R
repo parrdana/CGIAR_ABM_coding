@@ -202,7 +202,7 @@ while(n<22) #SWAT simulation period: 22 years
   #mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   
   #OPTION 2:increase irr_eff in all subbasins in that agent
-  mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID==New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.75,Irri_eff*1.1),Irri_eff))%>% 
+  New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID==New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.75,Irri_eff*1.1),Irri_eff))%>% 
   mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   
   ################################
