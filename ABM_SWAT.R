@@ -91,9 +91,10 @@ while(n<22) #SWAT simulation period: 22 years
   New_Eff <- filter(crop_mekong, year == 1 & HRU_ID == 1) %>% select(SB_ID, HRU_ID,Act_yield) %>% 
     left_join(sb_char) %>% 
     select(HRU_ID,SB_ID,Agent_ID,Act_yield,tar_kg.ha,SB_Area_ha,AreaFrac,Irri_TS,Irri_eff) %>%
-    mutate(tar_yield = SB_Area_ha*AreaFrac*tar_kg.ha*(1/907.2)) %>% #convert target yield into tonnes from kg/ha 
-    mutate(New_Irri_eff = ifelse(Act_yield < tar_yield,min(1,Irri_eff*1.1),Irri_eff)) %>% 
-    mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+    mutate(tar_yield = SB_Area_ha*AreaFrac*tar_kg.ha*(1/907.2)) #%>% #convert target yield into tonnes from kg/ha 
+    #mutate(New_Irri_eff = ifelse(Act_yield < tar_yield,min(1,Irri_eff*1.1),Irri_eff)) %>% 
+    #mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+    #save New_Eff for later use with hpflag or a similar data frame if it gets changed
   
   UpdateAreas <- NULL
   
@@ -118,13 +119,13 @@ while(n<22) #SWAT simulation period: 22 years
   }
   
 ###############################################################################
-# Hydropower generation calculation and constraints
+# Hydropower generation calculation, constraints, and flags
 ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
   if (n<=3){#first year of simulation is year 3
     readhydpow <- read.csv("reservoir_data_for_ABM.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
     mean_hydpow <- as.numeric(readhydpow$Mean.Annual.Energy..GWh.) #(GWh)
-    min_hydpow <- mean_hydpow *0.8# set min at 80% of mean for now
+    min_hydpow <- mean_hydpow *0.9# set min at 90% of mean for now
     res_eff <- readhydpow$Efficiency
     res_a <- readhydpow$a
     res_b <- readhydpow$b}
@@ -139,8 +140,17 @@ while(n<22) #SWAT simulation period: 22 years
   #u = efficiency (in general ranging 0.75 to 0.95)
   hydpow <- (res_eff*1000*9.81*res_head*res_Q)/1000000000*8760;names(hydpow)<-paste0("hydpow_res",1:10)
   
+
+  hpflag <- rep(0,nrow(ag_sb))#number of rows = number of subbasins
+  res_exist <- rep(0,nrow(sb_char)); res_exist=ifelse(ag_sb$SB_ID %in% readhydpow$subbasin,1,0)
+  hpinfo <- data.frame(ag_sb$SB_ID,res_exist,hpflag);names(hpinfo)<-c("SB_ID","res_exist","hpflag")
+  #this is used to see if hydropower requirements are not met on any particular year,
+  #if they are not, then increase irr_eff in all subbasins in that agent such that there is more water for storage/hydropower
+  New_Eff <- right_join(New_Eff,hpinfo,by="SB_ID")
+  #the hpinfo dataframe is combined with the crops one for later ease
+  
   ###############################################################################
-  # Hydropower decisions
+  # Hydropower decisions (management changes)
   ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
   
   nores=10;rr=1:nores
@@ -152,6 +162,7 @@ while(n<22) #SWAT simulation period: 22 years
       hptrigcount[r] <- hptrigcount[r]+1
         
       if (hydpow[r]< min_hydpow[r]){
+        New_Eff$hpflag <- ifelse(New_Eff$SB_ID==readhydpow$subbasin[r],1,0)#hp flag for later irr_eff change
           
         #asign TRUE to most recent year and replace all other years with the value from the year before
         hptrig[r,10]<-hptrig[r,9];hptrig[r,9]<-hptrig[r,8];hptrig[r,8]<-hptrig[r,7];hptrig[r,7]<-hptrig[r,6];hptrig[r,6]<-hptrig[r,5];hptrig[r,5]<-hptrig[r,4];hptrig[r,4]<-hptrig[r,3];hptrig[r,3]<-hptrig[r,2];hptrig[r,2]<-hptrig[r,1];hptrig[r,1]<-TRUE;
@@ -160,7 +171,7 @@ while(n<22) #SWAT simulation period: 22 years
           starg[r,-(5:10)] <- starg[r,-(5:10)]*0.7
           ndtargr[r] <- ndtargr[r]-4
           hptrigcount[r]=0#reset hydropower trigger count after changing reservoir managemnt practices to ensure it will not be changed for at least 10 more years (if ever again)
-            
+          
         }else if (sum(hptrig[r,])==9 & hptrigcount[r]>=10){#if hydropower generated is less than the minimum for 9 of last 10 years
           #decrease number of days required to reach target and target storage to a lesser extent than for 10/10 years
           starg[r,-(5:10)] <- starg[r,-(5:10)]*0.8
@@ -173,6 +184,7 @@ while(n<22) #SWAT simulation period: 22 years
           ndtargr[r] <- ndtargr[r]-2
           hptrigcount[r]=0#reset hydropower trigger count
             
+        }else{}
           
       }else{
           #asign FALSE to most recent year and replace all other years with the value from the year before
@@ -181,6 +193,18 @@ while(n<22) #SWAT simulation period: 22 years
     }#end if nan
   }#end for loop
 
+  ###################################################
+  # If hydropower requirements not met (hpflag), then increase irr_eff 
+  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  
+  #OPTION 1: increase irr_eff in just that subbasin
+  #mutate(New_Eff, New_Irri_eff = ifelse(hpflag==1,min(1,Irri_eff*1.1),Irri_eff)) %>% 
+  #mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+  
+  #OPTION 2:increase irr_eff in all subbasins in that agent
+  New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID==New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.75,Irri_eff*1.1),Irri_eff))%>% 
+  mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+  
   ################################
   #Post-calculation for (From SWAT output) ecosystem services
   
