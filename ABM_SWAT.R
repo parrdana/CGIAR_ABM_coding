@@ -3,6 +3,21 @@ library(dplyr)
 library(magrittr)
 library(gdata)
 
+### THIS CROP YIELD DATA DOES NOT CHANGE ########
+ag_sb <- read.csv("MK_Agent_Sub_basins0907.csv") %>% rename(SB_ID = Subbasin) #agent-subbasin relationship
+cy_tar <- read.csv("TargetYields_rice_maize.csv") %>% rename(SB_ID = subbasin) %>% #target crop yields
+  gather(key=Crop,value=TarYields,-SB_ID) %>% 
+  separate(Crop,into = c("CName","Unit"),sep = "_") %>% 
+  mutate(TarYields = TarYields/907.2,
+         HRU_ID = ifelse(CName == "IRICE",1,3)) %>%
+  left_join(ag_sb,by="SB_ID") %>% 
+  select(Agent_ID,SB_ID,HRU_ID,TarYields)
+  
+crop_hru <- read.table("Crop_initial.txt")
+colnames(crop_hru) <- c("SB_ID","HRU_ID","AreaFrac","PlantDate","IrriHeat","Irri_TS","Irri_eff")
+
+costfactor = 1000 #this is the cost of increasing efficiency by 1%
+
 
 #trigger to keep track of long term hydropower generation and whether it falls below minimum
 hptrig <- matrix(rep(FALSE,100),10); 
@@ -22,9 +37,6 @@ while(n<22) #SWAT simulation period: 22 years
   ###################################################################################
   # initialization 
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  
-  crop_hru <- read.table("Crop_initial.txt")
-  colnames(crop_hru) <- c("SB_ID","HRU_ID","AreaFrac","PlantDate","IrriHeat","Irri_TS","Irri_eff")
 
   res_ini <- read.table(file="Reservoir_initial.txt")
   
@@ -73,38 +85,34 @@ while(n<22) #SWAT simulation period: 22 years
   ########################################################################################
   #Crops constraints and decision making
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  
-  ag_sb <- read.csv("MK_Agent_Sub_basins0907.csv") %>% rename(SB_ID = Subbasin) #agent-subbasin relationship
-  cy_tar <- read.csv("Mean_Irrigated_rice_yield_by_subbasin.csv") %>% rename(SB_ID = subbasin) #target crop yields
-  
-  sb_char <- read.csv("Subbasins_char.csv") %>% #obtain sub-basin characteristics such as area
-    tbl_df() %>% 
-    transmute(SB_ID=Subbasin,SB_Area_ha=Area) %>% 
-    left_join(ag_sb,by="SB_ID") %>% #agent and sub-basin relationships
-    left_join(crop_hru,by="SB_ID") %>% #cropping information for each hru
-    left_join(cy_tar,by="SB_ID") %>% 
-    select(Agent_ID,SB_ID,SB_Area_ha,HRU_ID,AreaFrac:Irri_eff,kg.ha) %>% 
-    rename(tar_kg.ha = kg.ha)
-  
-  costfactor = 1000 #this is the cost of increasing efficiency by 1%
-  
-  New_Eff <- filter(crop_mekong, year == 1 & HRU_ID == 1) %>% select(SB_ID, HRU_ID,Act_yield) %>% 
-    left_join(sb_char) %>% 
-    select(HRU_ID,SB_ID,Agent_ID,Act_yield,tar_kg.ha,SB_Area_ha,AreaFrac,Irri_TS,Irri_eff) %>%
-    mutate(tar_yield = SB_Area_ha*AreaFrac*tar_kg.ha*(1/907.2)) #%>% #convert target yield into tonnes from kg/ha 
-    #mutate(New_Irri_eff = ifelse(Act_yield < tar_yield,min(1,Irri_eff*1.1),Irri_eff)) %>% 
-    #mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+  if (n = 1){ # for the first year, the initial area fraction and efficiency will be used, and updated subsequently
+    crop_eff <- select(crop_hru,SB_ID,HRU_ID,Irri_eff)
+    crop_area <- select(crop_hru,SB_ID,HRU_ID,AreaFrac)
+  } else {
+    crop_eff <- select(crop_hru,SB_ID,HRU_ID) %>%  mutate(Irri_eff = IRR_eff_by_R$New_Irri_eff)
+    crop_area <- select(crop_hru,SB_ID,HRU_ID) %>% mutate(AreaFrac = HRU_FR_by_R)
+  }
+
+  New_Eff <- filter(crop_mekong, year == 1 & HRU_ID %in% c(1,3)) %>% 
+    select(SB_ID, HRU_ID,Act_yield) %>% 
+    left_join(cy_tar) %>% 
+    left_join(crop_eff) %>% 
+    mutate(New_Irri_eff = ifelse(Act_yield < TarYields,min(1,Irri_eff*1.1),Irri_eff)) %>%
+    mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
     #save New_Eff for later use with hpflag or a similar data frame if it gets changed
+  
+  IRR_eff_by_R <- left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%
+    mutate(min_irr_flow = 1) %>% 
+    select(New_Irri_eff,min_irr_flow)
   
   UpdateAreas <- NULL
   
   for (sb in 1:47){
-    temp <- select(sb_char,Agent_ID,SB_ID,HRU_ID,AreaFrac) %>% 
-      mutate(NewAreaFrac =AreaFrac) %>% 
+    temp <- mutate(crop_area,NewAreaFrac =AreaFrac) %>% 
       filter(SB_ID==sb) %>% 
       data.frame()
     
-    val <- filter(New_Eff,SB_ID==sb) %>% .$New_Irri_eff
+    val <- filter(New_Eff,SB_ID==sb & HRU_ID == 1) %>% .$New_Irri_eff
     
     if(val ==1){
       del_inc <- temp[temp$HRU_ID==1,"AreaFrac"]*0.1
@@ -117,6 +125,8 @@ while(n<22) #SWAT simulation period: 22 years
     
     UpdateAreas <- bind_rows(UpdateAreas,temp)
   }
+  
+  HRU_FR_by_R <- UpdateAreas$NewAreaFrac
   
 ###############################################################################
 # Hydropower generation calculation, constraints, and flags
