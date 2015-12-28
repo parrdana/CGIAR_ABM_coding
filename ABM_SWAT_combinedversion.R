@@ -29,6 +29,10 @@ colnames(crop_hru) <- c("SB_ID","HRU_ID","AreaFrac","PlantDate","IrriHeat","Irri
 
 costfactor = 1000 #this is the cost of increasing efficiency by 1%
 
+#trigger to keep track of long term hydropower generation and whether it falls below minimum
+hptrig <- matrix(rep(FALSE,100),10); 
+hptrigcount <- rep(0,10)#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
+
 ########################################################################################
 #Survey weights for agriculture, hydropower, ecosystems
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -36,11 +40,6 @@ costfactor = 1000 #this is the cost of increasing efficiency by 1%
 readweights <- read.csv("Survey_Retabulated.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
 weights <- data.frame(readweights$Agriculture..,readweights$Hydropower..,readweights$Ecosystem.Services..)
 colnames(weights)<-c("A_weight","H_weight","E_weight")
-
-
-#trigger to keep track of long term hydropower generation and whether it falls below minimum
-hptrig <- matrix(rep(FALSE,100),10); 
-hptrigcount <- rep(0,10)#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
 
 #%%%%%%%%%%%%%%%%%%%%%%%%  SWAT  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 file.create("SWAT_flag.txt")
@@ -135,21 +134,49 @@ while(n<22) #SWAT simulation period: 22 years
   if (n<=3){#first year of simulation is year 3
     readhydpow <- read.csv("reservoir_data_for_ABM.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
     mean_hydpow <- as.numeric(readhydpow$Mean.Annual.Energy..GWh.) #(GWh)
+    capacity_hydpow <- as.numeric(readhydpow$Daily.Capacity..GWh.) #(GWh)
     min_hydpow <- mean_hydpow *0.9# set min at 90% of mean for now
     res_eff <- readhydpow$Efficiency
     res_a <- readhydpow$a
     res_b <- readhydpow$b}
   if (n>3){min_hydpow <- min_hydpow*1.07}#increase 7% per year (first year of simulation is year 3)
   #power demands  expected to increase by about 7% per year between (2010 and 2030)
-  res_Q <- (colMeans(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:10)]))/86400;names(res_Q)<-paste0("Q_res",1:10)
+  
+  #!!!!!!!!!!!older formulation before converting to daily and imposing max constraint!!!!!!!!!!!!!!
+  #res_Q <- (colMeans(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:10)]))/86400;
   #mean of daily flow converted to m3/s (from m3/day)
-  res_head <- colMeans(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b));names(res_head)<-paste0("head_res",1:10)
+  #res_head <- colMeans(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b));names(res_head)<-paste0("head_res",1:10)
   #mean head for the year for each reservoir
-  
   #hydpow = u*rho*g*H*Q/1,000,000,000 for GW (kgm^2/s^3*10^9) then *8760 to GWh
-  #u = efficiency (in general ranging 0.75 to 0.95)
-  hydpow <- (res_eff*1000*9.81*res_head*res_Q)/1000000000*8760;names(hydpow)<-paste0("hydpow_res",1:10)
+  #u = efficiency (in general ranging 0.75 to 0.95) but taken from data if exists
+  #hydpow <- (res_eff*1000*9.81*res_head*res_Q)/1000000000*8760;names(hydpow)<-paste0("hydpow_res",1:10)
+  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
+  daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:10)]/86400;
+  names(daily_res_Q)<-paste0("daily_Q_res",1:10)
+  #daily outflow for each reservoir converted to m3/s from m3/day
+
+  daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b));
+  names(daily_res_head)<-paste0("daily_head_res",1:10)
+  #daily mean head for each reservoir calculated from storage and empircal data
+  
+  #hydpow = u*rho*g*H*Q/1,000,000,000 for GW (kgm^2/s^3*10^9) then *24 to GWh
+  #u = efficiency (in general ranging 0.75 to 0.95) but taken from data if exists
+  raw_hydpow <- data.frame(mapply('*',((1000*9.81*daily_res_head*daily_res_Q)/1000000000*24),res_eff));
+  names(raw_hydpow)<-paste0("raw_hydpow_res",1:10)
+  raw_hydpow <- as.matrix(raw_hydpow)
+  #raw hydropower without accounting for capacity
+  
+  max_hydpow <- matrix(capacity_hydpow,nrow=ncol(raw_hydpow),ncol=nrow(raw_hydpow))
+  max_hydpow <- t(max_hydpow)
+  daily_hydpow <- pmin(raw_hydpow,max_hydpow)
+  #need two matrices to use pmindaily
+  colnames(daily_hydpow)<-paste0("daily_hydpow_res",1:10)
+  #capacity is now accounted for as a maximum value
+  
+  hydpow <-colSums(daily_hydpow)
+  names(hydpow)<-paste0("hydpow_res",1:10)
+  #hydropower is now summed to annual for later management decisions (compare to annual means)
   
   hpflag <- rep(0,nrow(ag_sb))#number of rows = number of subbasins
   res_exist <- rep(0,nrow(sb_char)); res_exist=ifelse(ag_sb$SB_ID %in% readhydpow$subbasin,1,0)
