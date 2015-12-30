@@ -230,9 +230,9 @@ while(n<22) #SWAT simulation period: 22 years
     }#end if nan
   }#end for loop
   
-  ###################################################
+  ##########################################################
   # If hydropower requirements not met (hpflag), then increase irr_eff 
-  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
   #OPTION 1: increase irr_eff in just that subbasin
   #mutate(New_Eff, New_Irri_eff = ifelse(hpflag==1,min(1,Irri_eff*1.1),Irri_eff)) %>% 
@@ -242,12 +242,101 @@ while(n<22) #SWAT simulation period: 22 years
   New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID==New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.75,Irri_eff*1.1),Irri_eff))%>% 
     mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   
-  ################################
+  ###########################################################
   #Post-calculation for (From SWAT output) ecosystem services
+  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
   # calculate water availability for domestic use
+  
   # calculate water availability for industrial use
-  # ecosystem requirements
+  
+  ############ecosystem requirements!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  columnend<-(nrow(ag_sb)+2);
+  ecoyear<-flow_mekong[which(flow_mekong$year==n),3:columnend];
+  
+  #Magnitude Timing (IHA 1:12 - mean streamflow for each calendar month)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  jan<-as.vector(colMeans(ecoyear[1:31,]));feb<-as.vector(colMeans(ecoyear[32:59,]));mar<-as.vector(colMeans(ecoyear[60:90,]));apr<-as.vector(colMeans(ecoyear[91:120,]));may<-as.vector(colMeans(ecoyear[121:151,]));jun<-as.vector(colMeans(ecoyear[152:181,]));
+  jul<-as.vector(colMeans(ecoyear[182:212,]));aug<-as.vector(colMeans(ecoyear[213:243,]));sep<-as.vector(colMeans(ecoyear[244:273,]));oct<-as.vector(colMeans(ecoyear[274:304,]));nov<-as.vector(colMeans(ecoyear[305:334,]));dec<-as.vector(colMeans(ecoyear[335:365,]));
+  
+  #Magnitude Duration (IHA 13:22 - annual max/min 1,3,7,30,90-day means)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  day1min<-apply(ecoyear,2,min); day1max<-apply(ecoyear,2,max)
+  
+  for (t in seq(1,365,90)){
+    for (s in t:(t+89)){
+      if (s==1){
+        hold90<-colSums(ecoyear[s:(s+89),])
+      }else{
+        hold90new<-colSums(ecoyear[s:(s+89),])
+        hold90<-rbind(hold90,hold90new)
+      }
+    }
+  }
+  day90max<-apply(hold90[1:276,],2,max);day90min<-apply(hold90[1:276,],2,min)
+  #will be 276 saved 90day values in hold90 for 90day means
+  
+  for (t in seq(1,365,30)){
+    for (s in t:(t+29)){
+      if (s==1){
+        hold30<-colSums(ecoyear[s:(s+29),])
+      }else{
+        hold30new<-colSums(ecoyear[s:(s+29),])
+        hold30<-rbind(hold30,hold30new)
+      }
+    }
+  }
+  day30max<-apply(hold30[1:336,],2,max);day30min<-apply(hold30[1:336,],2,min)
+  #will be 336 saved 30day values in hold30 for 30day means
+  
+  for (t in seq(1,365,7)){
+    for (s in t:(t+6)){
+      if (s==1){
+        hold7<-colSums(ecoyear[s:(s+6),])
+      }else{
+        hold7new<-colSums(ecoyear[s:(s+6),])
+        hold7<-rbind(hold7,hold7new)
+      }
+    }
+  }
+  day7max<-apply(hold7[1:359,],2,max);day7min<-apply(hold7[1:359,],2,min)
+  #will be 359 saved 7day values in hold7 for 7day means
+  
+  for (t in seq(1,365,3)){
+    for (s in t:(t+2)){
+      if (s==1){
+        hold3<-colSums(ecoyear[s:(s+2),])
+      }else{
+        hold3new<-colSums(ecoyear[s:(s+2),])
+        hold3<-rbind(hold3,hold3new)
+      }
+    }
+  }
+  day3max<-apply(hold3[1:363,],2,max);day3min<-apply(hold3[1:363,],2,min)
+  #will be 363 saved 3day values in hold3 for 3day means
+
+  #Timing (IHA 23:24 - day of 1-day min and max)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  mindate<-apply(ecoyear,2,which.min); maxdate<-apply(ecoyear,2,which.max)
+  
+  #Magnitude Frequency Duration (IHA 25:28 - number of low/high pulses, mean duration of low/high pulses)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  # to quantify these we need to establish thresholds for what constitutes a high or low pulse- e.g. 75percentile,25percentile of values over long period of time (pre-simulation)
+  
+  #Frequency Rate of Change (IHA 29:32 - mean of positive/negative differences between daily values, number of rises/falls)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  ecochange1<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));ecochange2<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));
+  ecochange1[ecochange1<=0]<-NA; ecochange2[ecochange2>=0]<-NA;
+  mean_increase <- colMeans(ecochange1,na.rm=TRUE); mean_decrease <- colMeans(ecochange2,na.rm=TRUE);
+  number_rises <- apply(ecochange1, 2, function(x) length(which(!is.na(x)))); number_falls <- apply(ecochange2, 2, function(x) length(which(!is.na(x))))
+    
+  
+  if (n==1){
+    IHA <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,mean_increase,mean_decrease,number_rises,number_falls)
+    colnames(IHA)[1:30] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","ave_increa","ave_decrea","No. Rises","No. Falls")
+    rownames(IHA) <- NULL
+  }else{
+    IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,mean_increase,mean_decrease,number_rises,number_falls)
+    colnames(IHAnew)[1:30] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","ave_increa","ave_decrea","No. Rises","No. Falls")
+    rownames(IHAnew) <- NULL
+    IHA <- rbind(IHA,IHAnew)
+  }
+  #"IHAnew" holds IHA's for current year and "IHA" holds all years
   
   ############################################################################################################################
   ############################################################################################################################
