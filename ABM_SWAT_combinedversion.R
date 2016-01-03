@@ -84,7 +84,7 @@ while(n<22) #SWAT simulation period: 22 years
   ########################################################################################
   #Crops constraints and decision making
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  if (n = 1){ # for the first year, the initial area fraction and efficiency will be used, and updated subsequently
+  if (n == 1){ # for the first year, the initial area fraction and efficiency will be used, and updated subsequently
     crop_eff <- select(crop_hru,SB_ID,HRU_ID,Irri_eff)
     crop_area <- select(crop_hru,SB_ID,HRU_ID,AreaFrac)
   } else {
@@ -179,7 +179,7 @@ while(n<22) #SWAT simulation period: 22 years
   #hydropower is now summed to annual for later management decisions (compare to annual means)
   
   hpflag <- rep(0,nrow(ag_sb))#number of rows = number of subbasins
-  res_exist <- rep(0,nrow(sb_char)); res_exist=ifelse(ag_sb$SB_ID %in% readhydpow$subbasin,1,0)
+  res_exist <- rep(0,nrow(ag_sb)); res_exist=ifelse(ag_sb$SB_ID %in% readhydpow$subbasin,1,0)
   hpinfo <- data.frame(ag_sb$SB_ID,res_exist,hpflag);names(hpinfo)<-c("SB_ID","res_exist","hpflag")
   #this is used to see if hydropower requirements are not met on any particular year,
   #if they are not, then increase irr_eff in all subbasins in that agent such that there is more water for storage/hydropower
@@ -190,7 +190,7 @@ while(n<22) #SWAT simulation period: 22 years
   # Hydropower decisions (management changes)
   ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
   
-  nores=10;rr=1:nores
+  nores=nrow(readhydpow);rr=1:nores
   for (r in rr){#reservoir loop
     
     if (!is.na(min_hydpow[r])){#for now some of the reservoirs are either not reservoirs but mistakes on SWAT side or have no 
@@ -199,7 +199,7 @@ while(n<22) #SWAT simulation period: 22 years
       hptrigcount[r] <- hptrigcount[r]+1
       
       if (hydpow[r]< min_hydpow[r]){
-        New_Eff$hpflag <- ifelse(New_Eff$SB_ID==readhydpow$subbasin[r],1,0)#hp flag for later irr_eff change
+        New_Eff$hpflag <- ifelse(New_Eff$SB_ID==readhydpow$subbasin[r],1,New_Eff$hpflag)#hp flag for later irr_eff change
         
         #asign TRUE to most recent year and replace all other years with the value from the year before
         hptrig[r,10]<-hptrig[r,9];hptrig[r,9]<-hptrig[r,8];hptrig[r,8]<-hptrig[r,7];hptrig[r,7]<-hptrig[r,6];hptrig[r,6]<-hptrig[r,5];hptrig[r,5]<-hptrig[r,4];hptrig[r,4]<-hptrig[r,3];hptrig[r,3]<-hptrig[r,2];hptrig[r,2]<-hptrig[r,1];hptrig[r,1]<-TRUE;
@@ -239,7 +239,7 @@ while(n<22) #SWAT simulation period: 22 years
   #mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   
   #OPTION 2:increase irr_eff in all subbasins in that agent
-  New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID==New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.75,Irri_eff*1.1),Irri_eff))%>% 
+  New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID %in% New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.8,Irri_eff*1.1),Irri_eff))%>% 
     mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   
   ###########################################################
@@ -343,26 +343,32 @@ while(n<22) #SWAT simulation period: 22 years
   # Write ABM output (SWAT input) to data file
   ############################################################################################################################
   ############################################################################################################################
-  irr_minflow[] <- crop_hru$Irri_minflow
-  irr_eff <- crop_hru$Irri_eff
-  hru_out<-crop_hru[,-8]
-  #these need to be changed as to not print out intial values (but for now these output communicate with SWAT properly)
-
+  final_min_irr_flow<-IRR_eff_by_R$min_irr_flow
+  IRR_eff_by_R<-IRR_eff_by_R[,-1];final_Irri_eff<-rep(New_Eff$New_Irri_eff,1,each=4);IRR_eff_by_R<-cbind(final_Irri_eff,IRR_eff_by_R)
+  colnames(IRR_eff_by_R)<-c("New_Irri_eff","min_irr_flow")
+  #irr_eff is updated by hydropower so the values need to be replaced.
+  
+  hru_out<-crop_hru[,-8];hru_out<-hru_out[,-3];hru_out<-cbind(hru_out,HRU_FR_by_R);hru_out<-hru_out[c(1,2,7,3,4,5,6)]
+  #this uses the initial file as a template because the write out mimics that file. Irrigation minimum flow is removed since that is not suppose
+  #to be written out in this file, however the initial areas are replaced with what was decided upon by the crop section of the ABM
   
   res<-cbind(starg,ndtargr,maxout,minout)
-  irr_out<-cbind(irr_eff,irr_minflow)
-  write.table(irr_out,file="Irr_eff_by_R.txt",col.names = F, row.names = F)
+
+  write.table(IRR_eff_by_R,file="Irr_eff_by_R.txt",col.names = F, row.names = F)
   write.table(res,file="Reservoir_by_R.txt", col.names = F, row.names = F) 
   write.table(hru_out,file="HRU_FR_by_R.txt", col.names = F, row.names = F) 
-  
+  ################################################################
+  #Crop initial needs to be re-written at the end of each year to replace old irr_eff and irr_min_flow values with new ABM values as SWAT will not 
+  crop_hru_resave<-crop_hru[,-8];crop_hru_resave<-crop_hru_resave[,-7];crop_hru_resave<-cbind(crop_hru_resave,final_Irri_eff,final_min_irr_flow)
+  write.table(crop_hru_resave,file="Crop_initial.txt",col.names = F, row.names = F)
   #########################################################
   #save decision variables for each year for later analysis
-  #way this is written now basically just combines all years of simulation and writes similarly as for SWAT input only including year
+  #way this is written now basically just combines all years of simulation (by append) and writes similarly as for SWAT input only including year
   
-  hru_out_save<-cbind(n,crop_hru[,-8])
-  res_save<-cbind(n,starg,ndtargr,maxout,minout)
-  irr_out_save<-cbind(n,irr_eff,irr_minflow)
-  write.table(irr_out_save,file="save_Irr_eff_by_R.txt",col.names = F, row.names = F, append =T)
+  hru_out_save<-cbind(n,hru_out)
+  res_save<-cbind(n,res)
+  IRR_eff_by_R_save<-cbind(n,IRR_eff_by_R)
+  write.table(IRR_eff_by_R_save,file="save_Irr_eff_by_R.txt",col.names = F, row.names = F, append =T)
   write.table(res_save,file="save_Reservoir_by_R.txt", col.names = F, row.names = F, append =T) 
   write.table(hru_out_save,file="save_HRU_FR_by_R.txt", col.names = F, row.names = F, append =T) 
   
