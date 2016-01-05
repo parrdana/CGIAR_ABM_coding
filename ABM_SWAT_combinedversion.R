@@ -138,7 +138,8 @@ while(n<22) #SWAT simulation period: 22 years
     min_hydpow <- mean_hydpow *0.9# set min at 90% of mean for now
     res_eff <- readhydpow$Efficiency
     res_a <- readhydpow$a
-    res_b <- readhydpow$b}
+    res_b <- readhydpow$b
+    res_c <- readhydpow$c}
   if (n>3){min_hydpow <- min_hydpow*1.07}#increase 7% per year (first year of simulation is year 3)
   #power demands  expected to increase by about 7% per year between (2010 and 2030)
   
@@ -155,8 +156,8 @@ while(n<22) #SWAT simulation period: 22 years
   daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:10)]/86400;
   names(daily_res_Q)<-paste0("daily_Q_res",1:10)
   #daily outflow for each reservoir converted to m3/s from m3/day
-
-  daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b));
+  
+  daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b+res_c));
   names(daily_res_head)<-paste0("daily_head_res",1:10)
   #daily mean head for each reservoir calculated from storage and empircal data
   
@@ -241,10 +242,13 @@ while(n<22) #SWAT simulation period: 22 years
   #OPTION 2:increase irr_eff in all subbasins in that agent
   New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID %in% New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.8,Irri_eff*1.1),Irri_eff))%>% 
     mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+  #adjust irr eff in New_Eff for later use (above) and in IRR_eff_by_R for writing out (below)
+  final_Irri_eff<-rep(New_Eff$New_Irri_eff,1,each=4);
+  IRR_eff_by_R<-mutate(IRR_eff_by_R,New_Irri_eff =final_Irri_eff)
   
   ###########################################################
   #Post-calculation for (From SWAT output) ecosystem services
-  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
   # calculate water availability for domestic use
   
@@ -312,19 +316,24 @@ while(n<22) #SWAT simulation period: 22 years
   }
   day3max<-apply(hold3[1:363,],2,max);day3min<-apply(hold3[1:363,],2,min)
   #will be 363 saved 3day values in hold3 for 3day means
-
+  
   #Timing (IHA 23:24 - day of 1-day min and max)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   mindate<-apply(ecoyear,2,which.min); maxdate<-apply(ecoyear,2,which.max)
   
   #Magnitude Frequency Duration (IHA 25:28 - number of low/high pulses, mean duration of low/high pulses)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   # to quantify these we need to establish thresholds for what constitutes a high or low pulse- e.g. 75percentile,25percentile of values over long period of time (pre-simulation)
+  #highpulse<- lowpulse<- #high and low pulse threshold taken from historic
+  #counthigh<-ecoyear>highpulse; hipulse_no<-apply(counthigh,2,sum)
+  #countlow<-ecoyear<lowpulse; lopulse_no<-apply(countlow,2,sum)
+  #hipulse_dur<-apply(counthigh,2,rle)
+  #lopulse_dur<-
   
   #Frequency Rate of Change (IHA 29:32 - mean of positive/negative differences between daily values, number of rises/falls)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ecochange1<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));ecochange2<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));
   ecochange1[ecochange1<=0]<-NA; ecochange2[ecochange2>=0]<-NA;
   mean_increase <- colMeans(ecochange1,na.rm=TRUE); mean_decrease <- colMeans(ecochange2,na.rm=TRUE);
   number_rises <- apply(ecochange1, 2, function(x) length(which(!is.na(x)))); number_falls <- apply(ecochange2, 2, function(x) length(which(!is.na(x))))
-    
+  
   
   if (n==1){
     IHA <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,mean_increase,mean_decrease,number_rises,number_falls)
@@ -343,25 +352,18 @@ while(n<22) #SWAT simulation period: 22 years
   # Write ABM output (SWAT input) to data file
   ############################################################################################################################
   ############################################################################################################################
-  final_min_irr_flow<-IRR_eff_by_R$min_irr_flow
-  IRR_eff_by_R<-IRR_eff_by_R[,-1];final_Irri_eff<-rep(New_Eff$New_Irri_eff,1,each=4);IRR_eff_by_R<-cbind(final_Irri_eff,IRR_eff_by_R)
-  colnames(IRR_eff_by_R)<-c("New_Irri_eff","min_irr_flow")
-  #irr_eff is updated by hydropower so the values need to be replaced.
+  #IRR_eff_by_R is already constructed
   
   hru_out<-crop_hru[,-8];hru_out<-hru_out[,-3];hru_out<-cbind(hru_out,HRU_FR_by_R);hru_out<-hru_out[c(1,2,7,3,4,5,6)]
   #this uses the initial file as a template because the write out mimics that file. Irrigation minimum flow is removed since that is not suppose
   #to be written out in this file, however the initial areas are replaced with what was decided upon by the crop section of the ABM
   
   res<-cbind(starg,ndtargr,maxout,minout)
-
+  
   write.table(IRR_eff_by_R,file="Irr_eff_by_R.txt",col.names = F, row.names = F)
   write.table(res,file="Reservoir_by_R.txt", col.names = F, row.names = F) 
   write.table(hru_out,file="HRU_FR_by_R.txt", col.names = F, row.names = F) 
   ################################################################
-  #Crop initial needs to be re-written at the end of each year to replace old irr_eff and irr_min_flow values with new ABM values as SWAT will not 
-  crop_hru_resave<-crop_hru[,-8];crop_hru_resave<-crop_hru_resave[,-7];crop_hru_resave<-cbind(crop_hru_resave,final_Irri_eff,final_min_irr_flow)
-  write.table(crop_hru_resave,file="Crop_initial.txt",col.names = F, row.names = F)
-  #########################################################
   #save decision variables for each year for later analysis
   #way this is written now basically just combines all years of simulation (by append) and writes similarly as for SWAT input only including year
   
@@ -371,7 +373,6 @@ while(n<22) #SWAT simulation period: 22 years
   write.table(IRR_eff_by_R_save,file="save_Irr_eff_by_R.txt",col.names = F, row.names = F, append =T)
   write.table(res_save,file="save_Reservoir_by_R.txt", col.names = F, row.names = F, append =T) 
   write.table(hru_out_save,file="save_HRU_FR_by_R.txt", col.names = F, row.names = F, append =T) 
-  
   
   file.create("SWAT_flag.txt")
   n<-n+1
