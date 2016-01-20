@@ -319,26 +319,31 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   
   #Magnitude Frequency Duration (IHA 25:28 - number of low/high pulses, mean duration of low/high pulses)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   # to quantify these we need to establish thresholds for what constitutes a high or low pulse- e.g. 75percentile,25percentile of values over long period of time (pre-simulation)
-  #highpulse<- lowpulse<- #high and low pulse threshold taken from historic
-  #counthigh<-ecoyear>highpulse; hipulse_no<-apply(counthigh,2,sum)
-  #countlow<-ecoyear<lowpulse; lopulse_no<-apply(countlow,2,sum)
-  #hipulse_dur<-apply(counthigh,2,rle)
-  #lopulse_dur<-
+  highpulse<-apply(ecoyear,2,max)*.8; lowpulse<-apply(ecoyear,2,max)*.2; #high and low pulse threshold NEED to be taken from historic data once obtained
+  counthigh<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear));countlow<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear))#reinitialize each year
+  for (i in 1:ncol(ecoyear)){
+    hptrig <- matrix(rep(FALSE,nrow(res_ini)*10),nrow(res_ini)); 
+    counthigh[,i]<-ecoyear[,i]>highpulse[i];countlow[,i]<-ecoyear[,i]>lowpulse[i];
+  }
+  hipulse_no<-apply(counthigh,2,sum); lopulse_no<-apply(countlow,2,sum)
+  hipulse_dur<-apply(counthigh,2,function(x){
+    hirle<-rle(x);mean(hirle$lengths[hirle$values==TRUE])})
+  lopulse_dur<-apply(countlow,2,function(x){
+    lorle<-rle(x);mean(lorle$lengths[lorle$values==TRUE])})
     
   #Frequency Rate of Change (IHA 29:32 - mean of positive/negative differences between daily values, number of rises/falls)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ecochange1<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));ecochange2<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));
   ecochange1[ecochange1<=0]<-NA; ecochange2[ecochange2>=0]<-NA;
   mean_increase <- colMeans(ecochange1,na.rm=TRUE); mean_decrease <- colMeans(ecochange2,na.rm=TRUE);
   number_rises <- apply(ecochange1, 2, function(x) length(which(!is.na(x)))); number_falls <- apply(ecochange2, 2, function(x) length(which(!is.na(x))))
-    
   
   if (n==1){
-    IHA <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,mean_increase,mean_decrease,number_rises,number_falls)
-    colnames(IHA)[1:30] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","ave_increa","ave_decrea","No. Rises","No. Falls")
+    IHA <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
+    colnames(IHA)[1:34] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
     rownames(IHA) <- NULL
   }else{
-    IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,mean_increase,mean_decrease,number_rises,number_falls)
-    colnames(IHAnew)[1:30] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","ave_increa","ave_decrea","No. Rises","No. Falls")
+    IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
+    colnames(IHAnew)[1:34] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
     rownames(IHAnew) <- NULL
     IHA <- rbind(IHA,IHAnew)
   }
