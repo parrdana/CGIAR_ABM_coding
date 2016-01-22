@@ -54,7 +54,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   #################################################################################
   #SWAT output variables (ABM input variables)
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  
+
   ###### Streamflow 
   flow_mekong <- read.table("Flow_Mekong.txt")
   colnames(flow_mekong)[1:49] <- c("year","cal_day",paste0("Flow_SB_",1:47))
@@ -79,26 +79,28 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   ####### Crops
   crop_mekong  <- read.table("Crop_Mekong.txt")
   colnames(crop_mekong) <- c("year","SB_ID","HRU_ID","Act_yield","IWW")
-  
+
   ########################################################################################
   #Crops constraints and decision making
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
   if (n == 1){ # for the first year, the initial area fraction and efficiency will be used, and updated subsequently
     crop_eff <- select(crop_hru,SB_ID,HRU_ID,Irri_eff)
     crop_area <- select(crop_hru,SB_ID,HRU_ID,AreaFrac)
   } else {
-    crop_eff <- select(crop_hru,SB_ID,HRU_ID) %>%  mutate(Irri_eff = IRR_eff_by_R$New_Irri_eff)
+    foo<-IRR_eff_by_R$New_Irri_eff
+    crop_eff <- select(crop_hru,SB_ID,HRU_ID) %>%  mutate(Irri_eff = foo)
     crop_area <- select(crop_hru,SB_ID,HRU_ID) %>% mutate(AreaFrac = HRU_FR_by_R)
   }
-  
-  New_Eff <- filter(crop_mekong, year == 1 & HRU_ID %in% c(1,3)) %>% 
+  New_Eff <- filter(crop_mekong, year == n & HRU_ID %in% c(1,3)) %>% 
     select(SB_ID, HRU_ID,Act_yield) %>% 
     left_join(cy_tar) %>% 
     left_join(crop_eff) %>% 
-    mutate(New_Irri_eff = ifelse(Act_yield < TarYields,min(0.8,Irri_eff*1.1),Irri_eff)) %>%
-    mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+     mutate(New_Irri_eff = ifelse(Act_yield < TarYields,min(0.8,Irri_eff*1.1),Irri_eff)) %>%
+     mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)%>%
+     mutate(Irri_eff = New_Irri_eff)
   #save New_Eff for later use with hpflag or a similar data frame if it gets changed
-  
+
   IRR_eff_by_R <- left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%
     mutate(min_irr_flow = 1) %>% 
     select(New_Irri_eff,min_irr_flow)
@@ -125,7 +127,6 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   }
   
   HRU_FR_by_R <- UpdateAreas$NewAreaFrac
-  
   ###############################################################################
   # Hydropower generation calculation, constraints, and flags
   ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -231,18 +232,18 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   ##########################################################
   # If hydropower requirements not met (hpflag), then increase irr_eff 
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  
   #OPTION 1: increase irr_eff in just that subbasin
   #mutate(New_Eff, New_Irri_eff = ifelse(hpflag==1,min(1,Irri_eff*1.1),Irri_eff)) %>% 
   #mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   
   #OPTION 2:increase irr_eff in all subbasins in that agent
-  New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID %in% New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.8,Irri_eff*1.1),Irri_eff))%>% 
-  mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
+  for (i in 1:nrow(New_Eff)){
+    ifelse(New_Eff$Agent_ID[i] %in% New_Eff$Agent_ID[New_Eff$hpflag==1],New_Eff$New_Irri_eff[i] <- min(0.8,New_Eff$Irri_eff[i]*1.1),New_Eff$New_Irri_eff[i] <-New_Eff$Irri_eff[i])
+    New_Eff$AddEffCost[i] = New_Eff$AddEffCost[i]+(New_Eff$New_Irri_eff[i]-New_Eff$Irri_eff[i])*100*costfactor
+      }
   #adjust irr eff in New_Eff for later use (above) and in IRR_eff_by_R for writing out (below)
   final_Irri_eff<-rep(New_Eff$New_Irri_eff,1,each=4);
   IRR_eff_by_R<-mutate(IRR_eff_by_R,New_Irri_eff =final_Irri_eff)
-  
   ###########################################################
   #Post-calculation for (From SWAT output) ecosystem services
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
