@@ -30,9 +30,8 @@ colnames(crop_hru) <- c("SB_ID","HRU_ID","AreaFrac","PlantDate","IrriHeat","Irri
 costfactor = 1000 #this is the cost of increasing efficiency by 1%
 
 #trigger to keep track of long term hydropower generation and whether it falls below minimum
-hptrig <- matrix(rep(FALSE,100),10); 
-hptrigcount <- rep(0,10)#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
-
+hptrig <- matrix(rep(FALSE,nrow(res_ini)*10),nrow(res_ini)); 
+hptrigcount <- rep(0,nrow(res_ini))#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
 ########################################################################################
 #Survey weights for agriculture, hydropower, ecosystems
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -325,8 +324,17 @@ while(n<22) #SWAT simulation period: 22 years
   #highpulse<- lowpulse<- #high and low pulse threshold taken from historic
   #counthigh<-ecoyear>highpulse; hipulse_no<-apply(counthigh,2,sum)
   #countlow<-ecoyear<lowpulse; lopulse_no<-apply(countlow,2,sum)
+
+  for (i in 1:ncol(counthigh)){
+    counttrue=0;#reset for each column/subbasin
+    for (j in 1:nrow(counthigh)){
+      if (counthigh[j,i]==TRUE){
+        counttrue=counttrue+1
+      }
+    }
+  }
   #hipulse_dur<-apply(counthigh,2,rle)
-  #lopulse_dur<-
+  #lopulse_dur<-apply
   
   #Frequency Rate of Change (IHA 29:32 - mean of positive/negative differences between daily values, number of rises/falls)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ecochange1<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));ecochange2<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));
