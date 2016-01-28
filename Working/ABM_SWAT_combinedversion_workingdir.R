@@ -92,13 +92,20 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
     crop_eff <- select(crop_hru,SB_ID,HRU_ID) %>%  mutate(Irri_eff = foo)
     crop_area <- select(crop_hru,SB_ID,HRU_ID) %>% mutate(AreaFrac = HRU_FR_by_R)
   }
+  
+  New_Eff <- NULL
+  
   New_Eff <- filter(crop_mekong, year == n & HRU_ID %in% c(1,3)) %>% 
     select(SB_ID, HRU_ID,Act_yield) %>% 
-    left_join(cy_tar) %>% 
-    left_join(crop_eff) %>% 
-     mutate(New_Irri_eff = ifelse(Act_yield < TarYields,min(0.8,Irri_eff*1.1),Irri_eff)) %>%
-     mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)%>%
-     mutate(Irri_eff = New_Irri_eff)
+    left_join(cy_tar,by=c("SB_ID", "HRU_ID")) %>% 
+    left_join(crop_eff,by=c("SB_ID", "HRU_ID"))
+  
+  gg<- NULL
+  for (a in 1:94) {gg[a] <- min(0.8,New_Eff$Irri_eff[a]*1.1)}
+    
+    New_Eff %<>% mutate(New_Irri_eff = ifelse(Act_yield > TarYields,Irri_eff,gg)) %>%
+    #mutate(New_Irri_eff = Irri_eff) %>%
+    mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)  %>% mutate(Irri_eff = New_Irri_eff)
   #save New_Eff for later use with hpflag or a similar data frame if it gets changed
 
   IRR_eff_by_R <- left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%
@@ -114,7 +121,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
     
     val <- filter(New_Eff,SB_ID==sb & HRU_ID == 1) %>% .$New_Irri_eff
     
-    if(val ==1){
+    if(val == 0.8){
       del_inc <- temp[temp$HRU_ID==1,"AreaFrac"]*0.1
       
       temp[temp$HRU_ID==5,"NewAreaFrac"] <- max(0,temp[temp$HRU_ID==5,"AreaFrac"] - 0.5*del_inc)
@@ -238,11 +245,17 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   
   #OPTION 2:increase irr_eff in all subbasins in that agent
   for (i in 1:nrow(New_Eff)){
-    ifelse(New_Eff$Agent_ID[i] %in% New_Eff$Agent_ID[New_Eff$hpflag==1],New_Eff$New_Irri_eff[i] <- min(0.8,New_Eff$Irri_eff[i]*1.1),New_Eff$New_Irri_eff[i] <-New_Eff$Irri_eff[i])
+    ifelse(New_Eff$Agent_ID[i] %in% New_Eff$Agent_ID[New_Eff$hpflag==1],
+           New_Eff$New_Irri_eff[i] <- min(0.8,New_Eff$Irri_eff[i]*1.1),
+           New_Eff$New_Irri_eff[i] <-New_Eff$Irri_eff[i])
+    
     New_Eff$AddEffCost[i] = New_Eff$AddEffCost[i]+(New_Eff$New_Irri_eff[i]-New_Eff$Irri_eff[i])*100*costfactor
       }
+  
   #adjust irr eff in New_Eff for later use (above) and in IRR_eff_by_R for writing out (below)
-  final_Irri_eff<-rep(New_Eff$New_Irri_eff,1,each=4);
+  final_Irri_eff<-left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%  mutate(min_irr_flow = 1) %>% select(New_Irri_eff) %>% .$New_Irri_eff
+  final_Irri_eff[is.na(final_Irri_eff)==T] <- 0
+  #rep(New_Eff$New_Irri_eff,times=4,each=1);
   IRR_eff_by_R<-mutate(IRR_eff_by_R,New_Irri_eff =final_Irri_eff)
   ###########################################################
   #Post-calculation for (From SWAT output) ecosystem services
