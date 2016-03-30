@@ -33,18 +33,12 @@ hptrig <- matrix(rep(FALSE,nrow(res_ini)*10),nrow(res_ini));
 hptrigcount <- rep(0,nrow(res_ini))#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
 
 ########################################################################################
-#Survey weights for agriculture, hydropower, ecosystems & Level of Cooperation for each agent
+#Survey weights for agriculture, hydropower, ecosystems
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#both "Level of Cooperation.csv" and "Irr_Eff_minmax.csv" are files that can be created by users of the webtool
-readweights <- read.csv("Survey_Retabulated.csv",stringsAsFactors=FALSE)
-readloc <- read.csv("Level of Cooperation.csv",stringsAsFactors=FALSE)
-priorities <- data.frame(readloc$Agent_ID,readweights$Agriculture..,readweights$Hydropower..,readweights$Ecosystem.Services..,readloc$Level.of.Cooperation)
-colnames(priorities)<-c("Agent_ID","A_weight","H_weight","E_weight","LOC")
 
-irr_minmax <- read.csv("Irr_Eff_minmax.csv",stringsAsFactors=FALSE)
-colnames(irr_minmax)<-c("SB_ID","min_irr_eff","max_irr_eff")
-#defines the starting place for irr_eff as well as the cap at the subbasin level
-
+readweights <- read.csv("Survey_Retabulated.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
+weights <- data.frame(readweights$Agriculture..,readweights$Hydropower..,readweights$Ecosystem.Services..)
+colnames(weights)<-c("A_weight","H_weight","E_weight")
 
 #%%%%%%%%%%%%%%%%%%%%%%%%  SWAT  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 file.create("SWAT_flag.txt")
@@ -60,7 +54,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   #################################################################################
   #SWAT output variables (ABM input variables)
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
+  
   ###### Streamflow 
   flow_mekong <- read.table("Flow_Mekong.txt")
   colnames(flow_mekong)[1:49] <- c("year","cal_day",paste0("Flow_SB_",1:47))
@@ -85,52 +79,40 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   ####### Crops
   crop_mekong  <- read.table("Crop_Mekong.txt")
   colnames(crop_mekong) <- c("year","SB_ID","HRU_ID","Act_yield","IWW")
-
+  
   ########################################################################################
   #Crops constraints and decision making
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
   if (n == 1){ # for the first year, the initial area fraction and efficiency will be used, and updated subsequently
-    user_Irri_eff<-left_join(crop_hru,irr_minmax,by="SB_ID") %>% select(min_irr_eff) %>% .$min_irr_eff
-    #in the first year need to replace the starting irr_eff with what is input by the webtool users for each agent
-    crop_eff <- select(crop_hru,SB_ID,HRU_ID,Irri_eff)%>%  mutate(Irri_eff = user_Irri_eff)
+    crop_eff <- select(crop_hru,SB_ID,HRU_ID,Irri_eff)
     crop_area <- select(crop_hru,SB_ID,HRU_ID,AreaFrac)
   } else {
-    foo<-IRR_eff_by_R$New_Irri_eff
-    crop_eff <- select(crop_hru,SB_ID,HRU_ID) %>%  mutate(Irri_eff = foo)
+    crop_eff <- select(crop_hru,SB_ID,HRU_ID) %>%  mutate(Irri_eff = IRR_eff_by_R$New_Irri_eff)
     crop_area <- select(crop_hru,SB_ID,HRU_ID) %>% mutate(AreaFrac = HRU_FR_by_R)
   }
   
-  New_Eff <- NULL
-  
-  New_Eff <- filter(crop_mekong, year == n & HRU_ID %in% c(1,3)) %>% 
+  New_Eff <- filter(crop_mekong, year == 1 & HRU_ID %in% c(1,3)) %>% 
     select(SB_ID, HRU_ID,Act_yield) %>% 
-    left_join(cy_tar,by=c("SB_ID", "HRU_ID")) %>% 
-    left_join(crop_eff,by=c("SB_ID", "HRU_ID"))
-  
-  gg<- NULL;cap<- NULL
-  for (a in 1:nrow(New_Eff)) {cap[a] <- irr_minmax$max_irr_eff[irr_minmax$SB_ID==New_Eff$SB_ID[a]]#the cap here is user defined max_irr_eff on a subbasin level
-    gg[a] <- min(cap[a],New_Eff$Irri_eff[a]*1.1)}
-    
-  New_Eff %<>% mutate(New_Irri_eff = ifelse(Act_yield > TarYields,Irri_eff,gg)) %>%
-  #mutate(New_Irri_eff = Irri_eff) %>%
-  mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)  %>% mutate(Irri_eff = New_Irri_eff)
+    left_join(cy_tar) %>% 
+    left_join(crop_eff) %>% 
+    mutate(New_Irri_eff = ifelse(Act_yield < TarYields,min(0.8,Irri_eff*1.1),Irri_eff)) %>%
+    mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   #save New_Eff for later use with hpflag or a similar data frame if it gets changed
-
+  
   IRR_eff_by_R <- left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%
     mutate(min_irr_flow = 1) %>% 
     select(New_Irri_eff,min_irr_flow)
   
   UpdateAreas <- NULL
   
-  for (sb in 1:nrow(ag_sb)){
+  for (sb in 1:47){
     temp <- mutate(crop_area,NewAreaFrac =AreaFrac) %>% 
       filter(SB_ID==sb) %>% 
       data.frame()
     
     val <- filter(New_Eff,SB_ID==sb & HRU_ID == 1) %>% .$New_Irri_eff
     
-    if(val == 0.8){
+    if(val ==1){
       del_inc <- temp[temp$HRU_ID==1,"AreaFrac"]*0.1
       
       temp[temp$HRU_ID==5,"NewAreaFrac"] <- max(0,temp[temp$HRU_ID==5,"AreaFrac"] - 0.5*del_inc)
@@ -143,6 +125,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   }
   
   HRU_FR_by_R <- UpdateAreas$NewAreaFrac
+  
   ###############################################################################
   # Hydropower generation calculation, constraints, and flags
   ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -248,25 +231,18 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   ##########################################################
   # If hydropower requirements not met (hpflag), then increase irr_eff 
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  
   #OPTION 1: increase irr_eff in just that subbasin
   #mutate(New_Eff, New_Irri_eff = ifelse(hpflag==1,min(1,Irri_eff*1.1),Irri_eff)) %>% 
   #mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   
   #OPTION 2:increase irr_eff in all subbasins in that agent
-  cap<- NULL
-  for (i in 1:nrow(New_Eff)){
-    cap[i] <- irr_minmax$max_irr_eff[irr_minmax$SB_ID==New_Eff$SB_ID[i]]
-    ifelse(New_Eff$Agent_ID[i] %in% New_Eff$Agent_ID[New_Eff$hpflag==1],
-           New_Eff$New_Irri_eff[i] <- min(cap[i],New_Eff$Irri_eff[i]*1.1),
-           New_Eff$New_Irri_eff[i] <-New_Eff$Irri_eff[i])
-    
-    New_Eff$AddEffCost[i] = New_Eff$AddEffCost[i]+(New_Eff$New_Irri_eff[i]-New_Eff$Irri_eff[i])*100*costfactor
-      }
-  
+  New_Eff <- mutate(New_Eff,New_Irri_eff = ifelse(New_Eff$Agent_ID %in% New_Eff$Agent_ID[New_Eff$hpflag==1],min(0.8,Irri_eff*1.1),Irri_eff))%>% 
+  mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)
   #adjust irr eff in New_Eff for later use (above) and in IRR_eff_by_R for writing out (below)
-  final_Irri_eff<-left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%  mutate(min_irr_flow = 1) %>% select(New_Irri_eff) %>% .$New_Irri_eff
-  final_Irri_eff[is.na(final_Irri_eff)==T] <- 0
+  final_Irri_eff<-rep(New_Eff$New_Irri_eff,1,each=4);
   IRR_eff_by_R<-mutate(IRR_eff_by_R,New_Irri_eff =final_Irri_eff)
+  
   ###########################################################
   #Post-calculation for (From SWAT output) ecosystem services
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -399,6 +375,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   write.table(IRR_eff_by_R_save,file="save_Irr_eff_by_R.txt",col.names = F, row.names = F, append =T)
   write.table(res_save,file="save_Reservoir_by_R.txt", col.names = F, row.names = F, append =T) 
   write.table(hru_out_save,file="save_HRU_FR_by_R.txt", col.names = F, row.names = F, append =T) 
+  
   
   file.create("SWAT_flag.txt")
   n<-n+1
