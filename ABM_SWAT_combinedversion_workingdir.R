@@ -6,16 +6,24 @@ library(gdata)
 ###################################################################################
 # initialization 
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 res_ini <- read.table(file="Reservoir_initial.txt")
 starg <- res_ini[,6:17]
 ndtargr <- res_ini[,18]
 maxout <-res_ini[,19:30]
 minout <- res_ini[,31:42]
 
+#Need thresholds for decision changes
+maxoutthres <-res_ini[,19:30]*0.6;
+minoutthres <- res_ini[,31:42]+1000;
+#!!!! warning !!!! these will need to be set more realistically (perhaps off of average monthly outflows once calibrated)
+
+#days in each month- used in ecossytem section
+ndays<-matrix(0,ncol = 12, nrow = 2);ndays[1,1]<-1;ndays[2,1]<-31;ndays[1,2]<-32;ndays[2,2]<-59;ndays[1,3]<-60;ndays[2,3]<-90;ndays[1,4]<-91;ndays[2,4]<-120;ndays[1,5]<-121;ndays[2,5]<-151;ndays[1,6]<-152;ndays[2,6]<-181;
+ndays[1,7]<-182;ndays[2,7]<-212;ndays[1,8]<-213;ndays[2,8]<-243;ndays[1,9]<-244;ndays[2,9]<-273;ndays[1,10]<-274;ndays[2,10]<-304;ndays[1,11]<-305;ndays[2,11]<-334;ndays[1,12]<-335;ndays[2,12]<-365;
+
 ### THIS CROP YIELD DATA DOES NOT CHANGE ########
-ag_sb <- read.csv("MK_Agent_Sub_basins0907.csv") %>% rename(SB_ID = Subbasin) #agent-subbasin relationship
-cy_tar <- read.csv("TargetYields_rice_maize.csv") %>% rename(SB_ID = subbasin) %>% #target crop yields
+ag_sb <- read.csv("MK_Agent_Sub_basins_v2.csv") %>% rename(SB_ID = Subbasin) #agent-subbasin relationship
+cy_tar <- read.csv("TargetYields_rice_maize_v2.csv") %>% rename(SB_ID = subbasin) %>% #target crop yields
   gather(key=Crop,value=TarYields,-SB_ID) %>% 
   separate(Crop,into = c("CName","Unit"),sep = "_") %>% 
   mutate(TarYields = TarYields/907.2,
@@ -28,9 +36,18 @@ colnames(crop_hru) <- c("SB_ID","HRU_ID","AreaFrac","PlantDate","IrriHeat","Irri
 
 costfactor = 1000 #this is the cost of increasing efficiency by 1%
 
+resnum=nrow(res_ini);#number of reservoirs
+sbnum=nrow(ag_sb);#number of subbasins
+hotnum=max(ag_sb$Hotspot_Number);#number of hotspots
+
 #trigger to keep track of long term hydropower generation and whether it falls below minimum
-hptrig <- matrix(rep(FALSE,nrow(res_ini)*10),nrow(res_ini)); 
-hptrigcount <- rep(0,nrow(res_ini))#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
+hptrig <- matrix(rep(FALSE,resnum*10),resnum); 
+hptrigcount <- rep(0,resnum)#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
+
+#counts number of years in a row with ecosystem insufficiencies (needs to be initialized before year loop)
+IHAfailcount<-data.frame(matrix(0,ncol = 33, nrow = hotnum))#this stores the years in a row IHA values are insufficient
+# the ncol above may need to be edited to match the number of IHA's examined in "IHAnew" + 1 (32+1=33)
+IHAfailcount[,1]=1:hotnum;colnames(IHAfailcount)[1:ncol(IHAfailcount)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
 
 ########################################################################################
 #Survey weights for agriculture, hydropower, ecosystems & Level of Cooperation for each agent
@@ -41,7 +58,7 @@ readloc <- read.csv("Level of Cooperation.csv",stringsAsFactors=FALSE)
 priorities <- data.frame(readloc$Agent_ID,readweights$Agriculture..,readweights$Hydropower..,readweights$Ecosystem.Services..,readloc$Level.of.Cooperation)
 colnames(priorities)<-c("Agent_ID","A_weight","H_weight","E_weight","LOC")
 
-irr_minmax <- read.csv("Irr_Eff_minmax.csv",stringsAsFactors=FALSE)
+irr_minmax <- read.csv("Irr_Eff_minmax_v2.csv",stringsAsFactors=FALSE)
 colnames(irr_minmax)<-c("SB_ID","min_irr_eff","max_irr_eff")
 #defines the starting place for irr_eff as well as the cap at the subbasin level
 
@@ -63,7 +80,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
 
   ###### Streamflow 
   flow_mekong <- read.table("Flow_Mekong.txt")
-  colnames(flow_mekong)[1:49] <- c("year","cal_day",paste0("Flow_SB_",1:47))
+  colnames(flow_mekong)[1:ncol(flow_mekong)] <- c("year","cal_day",paste0("Flow_SB_",1:(ncol(flow_mekong)-2)))
   
   ABM_flow <- flow_mekong %>% 
     tbl_df() %>%
@@ -73,14 +90,13 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   
   ####### Reservoir Storage, outflow and surface area
   reservoir_mekong <- read.table("Reservoir_Mekong.txt")
-  colnames(reservoir_mekong)[1:32] <- c("year","cal_day",paste0("Volume_Res",1:10),paste0("SurfArea_Res",1:10),paste0("Outflow_Res",1:10))
+  colnames(reservoir_mekong)[1:ncol(reservoir_mekong)] <- c("year","cal_day",paste0("Volume_Res",1:resnum),paste0("SurfArea_Res",1:resnum),paste0("Outflow_Res",1:resnum))
   
   ABM_reservoir <- reservoir_mekong %>% 
     tbl_df() %>% 
     gather(key=Att,value=Variable,-year,-cal_day) %>%
     separate(col=Att,into=c("Attr","Reservoir"),sep="_") %>%
     mutate(Reservoir = extract_numeric(Reservoir)) 
-  #note: reservoir 1 and 7 are not actually reservoirs- created due to issues with SWAT
   
   ####### Crops
   crop_mekong  <- read.table("Crop_Mekong.txt")
@@ -112,18 +128,18 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   for (a in 1:nrow(New_Eff)) {cap[a] <- irr_minmax$max_irr_eff[irr_minmax$SB_ID==New_Eff$SB_ID[a]]#the cap here is user defined max_irr_eff on a subbasin level
     gg[a] <- min(cap[a],New_Eff$Irri_eff[a]*1.1)}
     
-  New_Eff %<>% mutate(New_Irri_eff = ifelse(Act_yield > TarYields,Irri_eff,gg)) %>%
+  New_Eff %<>% mutate(New_Irri_eff = ifelse(Act_yield >= TarYields,Irri_eff,gg)) %>%
   #mutate(New_Irri_eff = Irri_eff) %>%
   mutate(AddEffCost = (New_Irri_eff-Irri_eff)*100*costfactor)  %>% mutate(Irri_eff = New_Irri_eff)
   #save New_Eff for later use with hpflag or a similar data frame if it gets changed
 
   IRR_eff_by_R <- left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%
-    mutate(min_irr_flow = 1) %>% 
+    mutate(min_irr_flow = 0) %>% 
     select(New_Irri_eff,min_irr_flow)
   
   UpdateAreas <- NULL
   
-  for (sb in 1:nrow(ag_sb)){
+  for (sb in 1:sbnum){
     temp <- mutate(crop_area,NewAreaFrac =AreaFrac) %>% 
       filter(SB_ID==sb) %>% 
       data.frame()
@@ -147,8 +163,8 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   # Hydropower generation calculation, constraints, and flags
   ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
-  if (n<=3){#first year of simulation is year 3
-    readhydpow <- read.csv("reservoir_data_for_ABM.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
+  if (n==1){
+    readhydpow <- read.csv("reservoir_data_for_ABM_v2.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
     mean_hydpow <- as.numeric(readhydpow$Mean.Annual.Energy..GWh.) #(GWh)
     capacity_hydpow <- as.numeric(readhydpow$Daily.Capacity..GWh.) #(GWh)
     min_hydpow <- mean_hydpow *0.9# set min at 90% of mean for now
@@ -159,18 +175,18 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   if (n>3){min_hydpow <- min_hydpow*1.07}#increase 7% per year (first year of simulation is year 3)
   #power demands  expected to increase by about 7% per year between (2010 and 2030)
   
-  daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:10)]/86400;
-  names(daily_res_Q)<-paste0("daily_Q_res",1:10)
+  daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:resnum)]/86400;
+  names(daily_res_Q)<-paste0("daily_Q_res",1:resnum)
   #daily outflow for each reservoir converted to m3/s from m3/day
 
-  daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b+res_c));
-  names(daily_res_head)<-paste0("daily_head_res",1:10)
+  daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:resnum)])^res_b+res_c));
+  names(daily_res_head)<-paste0("daily_head_res",1:resnum)
   #daily mean head for each reservoir calculated from storage and empircal data
   
   #hydpow = u*rho*g*H*Q/1,000,000,000 for GW (kgm^2/s^3*10^9) then *24 to GWh
-  #u = efficiency (in general ranging 0.75 to 0.95) but taken from data if exists
+  #u = efficiency (in general 0.8) but taken from data if exists
   raw_hydpow <- data.frame(mapply('*',((1000*9.81*daily_res_head*daily_res_Q)/1000000000*24),res_eff));
-  names(raw_hydpow)<-paste0("raw_hydpow_res",1:10)
+  names(raw_hydpow)<-paste0("raw_hydpow_res",1:resnum)
   raw_hydpow <- as.matrix(raw_hydpow)
   #raw hydropower without accounting for capacity
   
@@ -178,14 +194,14 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   max_hydpow <- t(max_hydpow)
   daily_hydpow <- pmin(raw_hydpow,max_hydpow)
   #need two matrices to use pmindaily
-  colnames(daily_hydpow)<-paste0("daily_hydpow_res",1:10)
+  colnames(daily_hydpow)<-paste0("daily_hydpow_res",1:resnum)
   #capacity is now accounted for as a maximum value
   
   hydpow <-colSums(daily_hydpow)
-  names(hydpow)<-paste0("hydpow_res",1:10)
+  names(hydpow)<-paste0("hydpow_res",1:resnum)
   #hydropower is now summed to annual for later management decisions (compare to annual means)
   
-  nn=rep(n,nrow(readhydpow));resagent<-ag_sb$Agent_ID[ag_sb$SB_ID%in%readhydpow$subbasin..090715.setup.]
+  nn=rep(n,nrow(readhydpow));resagent<-ag_sb$Agent_ID[ag_sb$SB_ID%in%readhydpow$subbasin..0106.setup.]
   hydpow1<-data.frame(cbind(nn,resagent,readhydpow$Reservoir.name,hydpow));names(hydpow1)<-c("year","Agent_ID","Reservoir","Hydro.Power")
   if (n==1){
     hydpow_save<-hydpow1
@@ -193,8 +209,10 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
     hydpow_save<-rbind(hydpow_save,hydpow1)}
   #hydropower needs to be saved for each year for later analysis (summary tables)
   
-  hpflag <- rep(0,nrow(ag_sb))#number of rows = number of subbasins
-  res_exist <- rep(0,nrow(ag_sb)); res_exist=ifelse(ag_sb$SB_ID %in% readhydpow$subbasin,1,0)
+  hpflag <- rep(0,sbnum)#number of rows = number of subbasins
+  res_exist <- rep(0,sbnum); 
+  res_exist=ifelse(ag_sb$SB_ID %in% readhydpow$subbasin[readhydpow$Status=="Complete"],1,0)
+  #the above exist does not include non-"complete" dams
   hpinfo <- data.frame(ag_sb$SB_ID,res_exist,hpflag);names(hpinfo)<-c("SB_ID","res_exist","hpflag")
   #this is used to see if hydropower requirements are not met on any particular year,
   #if they are not, then increase irr_eff in all subbasins in that agent such that there is more water for storage/hydropower
@@ -204,18 +222,14 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   ###############################################################################
   # Hydropower decisions (management changes)
   ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
-  
-  nores=nrow(readhydpow);rr=1:nores
+  rr=1:resnum
   for (r in rr){#reservoir loop
     
-    if (!is.na(min_hydpow[r])){#for now some of the reservoirs are either not reservoirs but mistakes on SWAT side or have no 
-      #data from mrc such as (volume to head relationship, efficency) so ignore them
-      
+    if (readhydpow$Status[r]=="Complete"){#choose from Complete,UC,Planned,or Possible
       hptrigcount[r] <- hptrigcount[r]+1
       
       if (hydpow[r]< min_hydpow[r]){
         New_Eff$hpflag <- ifelse(New_Eff$SB_ID==readhydpow$subbasin[r],1,New_Eff$hpflag)#hp flag for later irr_eff change
-        
         #asign TRUE to most recent year and replace all other years with the value from the year before
         hptrig[r,10]<-hptrig[r,9];hptrig[r,9]<-hptrig[r,8];hptrig[r,8]<-hptrig[r,7];hptrig[r,7]<-hptrig[r,6];hptrig[r,6]<-hptrig[r,5];hptrig[r,5]<-hptrig[r,4];hptrig[r,4]<-hptrig[r,3];hptrig[r,3]<-hptrig[r,2];hptrig[r,2]<-hptrig[r,1];hptrig[r,1]<-TRUE;
         if (all(hptrig[])==TRUE & hptrigcount[r]>=10){#if hydropower generated is less than the minimum over last 10 years 
@@ -267,18 +281,13 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   final_Irri_eff<-left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%  mutate(min_irr_flow = 1) %>% select(New_Irri_eff) %>% .$New_Irri_eff
   final_Irri_eff[is.na(final_Irri_eff)==T] <- 0
   IRR_eff_by_R<-mutate(IRR_eff_by_R,New_Irri_eff =final_Irri_eff)
+  
   ###########################################################
   #Post-calculation for (From SWAT output) ecosystem services
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  
-  # calculate water availability for domestic use
-  
-  # calculate water availability for industrial use
-  
-  ############ecosystem requirements!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  columnend<-(nrow(ag_sb)+2);
-  ecoyear<-flow_mekong[which(flow_mekong$year==n),3:columnend];
-  
+  ############ ecosystem requirements - IHAs !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  columnend<-(sbnum+2); ecoyear<-flow_mekong[which(flow_mekong$year==n),3:columnend];
+   
   #Magnitude Timing (IHA 1:12 - mean streamflow for each calendar month)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   jan<-as.vector(colMeans(ecoyear[1:31,]));feb<-as.vector(colMeans(ecoyear[32:59,]));mar<-as.vector(colMeans(ecoyear[60:90,]));apr<-as.vector(colMeans(ecoyear[91:120,]));may<-as.vector(colMeans(ecoyear[121:151,]));jun<-as.vector(colMeans(ecoyear[152:181,]));
   jul<-as.vector(colMeans(ecoyear[182:212,]));aug<-as.vector(colMeans(ecoyear[213:243,]));sep<-as.vector(colMeans(ecoyear[244:273,]));oct<-as.vector(colMeans(ecoyear[274:304,]));nov<-as.vector(colMeans(ecoyear[305:334,]));dec<-as.vector(colMeans(ecoyear[335:365,]));
@@ -346,7 +355,6 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   highpulse<-apply(ecoyear,2,max)*.8; lowpulse<-apply(ecoyear,2,max)*.2; #high and low pulse threshold NEED to be taken from historic data once obtained
   counthigh<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear));countlow<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear))#reinitialize each year
   for (i in 1:ncol(ecoyear)){
-    hptrig <- matrix(rep(FALSE,nrow(res_ini)*10),nrow(res_ini)); 
     counthigh[,i]<-ecoyear[,i]>highpulse[i];countlow[,i]<-ecoyear[,i]>lowpulse[i];
   }
   hipulse_no<-apply(counthigh,2,sum); lopulse_no<-apply(countlow,2,sum)
@@ -363,16 +371,102 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   
   if (n==1){
     IHA <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
-    colnames(IHA)[1:34] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
+    IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
+    colnames(IHA)[1:ncol(IHA)] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
     rownames(IHA) <- NULL
+    colnames(IHAnew)[1:ncol(IHA)] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
+    rownames(IHAnew) <- NULL
   }else{
     IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
-    colnames(IHAnew)[1:34] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
+    colnames(IHAnew)[1:ncol(IHAnew)] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
     rownames(IHAnew) <- NULL
     IHA <- rbind(IHA,IHAnew)
   }
   #"IHAnew" holds IHA's for current year and "IHA" holds all years
+ 
+  ############################################################################################################################
+  # Ecosystem
+  ############################################################################################################################
+  #ecosystem requirements (IHA's)
+  IHAreq <- read.csv("IHAreq.csv")
+  #this file contains (for each hotspot) the targets of IHA's and the "acceptable" deviations from these targets
+  #this is a temporary fake file created based on the calculated IHAs -> this will be replaced by the actual data we obtain
   
+  ############################################################################################################################
+  #Checking requirements (IHA's)
+  #if we want to limit which IHA's we care about, then reduce IHAnew to those values only
+  ############################################################################################################################
+  hotIHA<-data.frame(matrix(0,ncol = (ncol(IHAnew)-1), nrow = hotnum));#hotIHA contains the IHA information for each hotspot
+  hotIHA[,1]=1:hotnum;colnames(hotIHA)[1:ncol(hotIHA)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
+  IHAfail<-data.frame(matrix(0,ncol = (ncol(IHAnew)-1), nrow = hotnum));#this stores to what extent IHA values are insufficient (difference from target)
+  IHAfail[,1]=1:hotnum;colnames(IHAfail)[1:ncol(IHAfail)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
+  
+  for (h in 1:hotnum){
+    countnum=0;
+    for (s in 1:sbnum){
+      if (ag_sb$Hotspot_Number[s]==h){
+        countnum=countnum+1;#most hotspots are spread across multiple subbasins
+        hotIHA[h,2:ncol(hotIHA)]=hotIHA[h,2:ncol(hotIHA)]+IHAnew[s,3:ncol(IHAnew)];
+      }
+    }
+    hotIHA[h,2:ncol(hotIHA)]=hotIHA[h,2:ncol(hotIHA)]/countnum;#this takes average of multiple subbasin IHA's
+    
+    #now need to compare current IHA up against IHA requirements
+    for (i in 2:ncol(hotIHA)){
+      if (((IHAreq[h,i]-IHAreq[h,(i+ncol(hotIHA)-1)]) <= hotIHA[h,i]) & (hotIHA[h,i] <= (IHAreq[h,i]+IHAreq[h,(i+ncol(hotIHA)-1)]))){
+        #if calculated IHA is between target+/-deviation then reset year counter of problem years in a row
+        IHAfailcount[h,i] <- 0;
+      }else{#if NOT between target+/-deviation then store difference from target and count number of years in a row
+        IHAfail[h,i] <- IHAreq[h,i]-hotIHA[h,i]#this stores to what extent IHA is insufficient (desired change)
+        
+        #need to also establish that the sign (+or-) of insufficiency is same as last year to count years in a row
+        if (n==1){
+          IHAfailcount[h,i] <- IHAfailcount[h,i] +1;#this stores the number of years in a row with a problem
+        }else{
+          if (sign(IHAfail[h,i])==sign(IHAfail_last[h,i])){
+            IHAfailcount[h,i] <- IHAfailcount[h,i] +1;
+          }else{
+            IHAfailcount[h,i] <- 0;#if insufficient in an opposite way, set counter back to zero
+          }
+        }
+      }
+    }
+  }
+  if (n==1){IHAfail_save<-cbind(n,IHAfail)}else{IHAfail_save <- rbind(IHAfail_save,cbind(n,IHAfail))}#in case we want to save all values for later analysis or summary table
+  IHAfail_last <-IHAfail;#save this year for next year use (see if sign of insufficiency is same across year counting)
+  
+  ############################################################################################################################
+  # Now to make decisions based on failures to meet requirements
+  ############################################################################################################################
+  resinternal <- read.csv("resinternal.csv")
+  #this file contains (for each hotspot) which UPSTREAM dam within the SAME agent can be called for help (if any) (priotiry given to closest)
+  #contains information for both present day and future scenarios (complete vs non-complete lists)
+    
+  nfail=3#number of years in a row with a problem before action is taken
+  for (h in 1:hotnum){
+    for (m in 1:12){
+      if ((IHAfail[h,m+1]>0) & (IHAfailcount[h,m+1]==nfail)){#if there is a demand for more water n years in a row
+        if (!is.na(resinternal[h,3])){#if there is a reservoir within the agent
+          #!!!!!! warning !!!!!!! when changing to future scenario, need to change [h,3] to [h,5] (above) and "internal_res_complete" (below) to "future"
+          rrr=resinternal$internal_res_complete[resinternal$Hotspot_Number==h]#reservoir in agent that can aid
+          currentout=reservoir_mekong[(reservoir_mekong$year==n), 2*resnum+2+rrr];
+          currentout<-mean(currentout[ndays[1,m]:ndays[2,m]]);#current outflow
+          changeout<-ifelse(IHAfail[h,m+1]<=currentout*1.2,IHAfail[h,m+1],currentout*1.2);
+          #not only have an absolute threshold (minoutthres below) but a threshold of 1 time change (above)
+          minout[rrr,m] <- ifelse(currentout+changeout <= minoutthres[rrr,m],currentout+changeout,minoutthres[rrr,m]); 
+          #increase minimum outflow but not over a set threshold (do we want to increase max also?- maybe if min hits threshold?)
+        }else{#if there is no reservoir within the agent then increase irri_minflow (reduce irrigation)
+          
+        }
+        IHAfailcount[h,m+1]=0
+        #after making decision, reset year counter for problem years in a row
+      }else if ((IHAfail[h,m+1]<0) & (IHAfailcount[h,m+1]==nfail)){#if there is a demand for less water
+      
+        IHAfailcount[h,m+1]=0
+        #after making decision, reset year counter for problem years in a row
+      }
+    }
+  }
   ############################################################################################################################
   ############################################################################################################################
   # Write ABM output (SWAT input) to data file
@@ -419,20 +513,25 @@ crop_mekongsum <- crop_mekong[crop_mekong$HRU_ID==1,c(1,2,4)]
 crop_mekong1 <- crop_mekong[crop_mekong$HRU_ID==3,c(1,2,4)]
 crop_mekongsum["M_Act_yield"] <- crop_mekong1$Act_yield
 #now add maize
+
+crop_mekongsum["Target"] <- New_Eff$TarYields[New_Eff$HRU_ID==1]
+crop_mekongsum["M_Target"] <- New_Eff$TarYields[New_Eff$HRU_ID==3]
+#now add targets
   
-agentinfo <- rep(ag_sb$Agent_ID,n); crop_mekongsum["Agent_ID"] <- agentinfo; crop_mekongsum <- crop_mekongsum[c(1,5,2,3,4)]
+agentinfo <- rep(ag_sb$Agent_ID,n); crop_mekongsum["Agent_ID"] <- agentinfo; crop_mekongsum <- crop_mekongsum[c(1,7,2,3,4,5,6)]
 #now add column for agent and rearange
   
 #!!!crummy part about not returning to ABM after year 22 is that the hydropower has to be calculated for that final year now and added to dataframe
-reservoir_mekong <- read.table("Reservoir_Mekong.txt");colnames(reservoir_mekong)[1:32] <- c("year","cal_day",paste0("Volume_Res",1:10),paste0("SurfArea_Res",1:10),paste0("Outflow_Res",1:10))
-daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:10)]/86400;names(daily_res_Q)<-paste0("daily_Q_res",1:10)
-daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:10)])^res_b+res_c));names(daily_res_head)<-paste0("daily_head_res",1:10)
-raw_hydpow <- data.frame(mapply('*',((1000*9.81*daily_res_head*daily_res_Q)/1000000000*24),res_eff));names(raw_hydpow)<-paste0("raw_hydpow_res",1:10)
-raw_hydpow <- as.matrix(raw_hydpow);max_hydpow <- matrix(capacity_hydpow,nrow=ncol(raw_hydpow),ncol=nrow(raw_hydpow));max_hydpow <- t(max_hydpow)
-daily_hydpow <- pmin(raw_hydpow,max_hydpow);colnames(daily_hydpow)<-paste0("daily_hydpow_res",1:10)
-hydpow <-colSums(daily_hydpow);names(hydpow)<-paste0("hydpow_res",1:10)
-nn=rep(n,nrow(readhydpow));resagent<-ag_sb$Agent_ID[ag_sb$SB_ID%in%readhydpow$subbasin..090715.setup.]
-hydpow1<-data.frame(cbind(nn,resagent,readhydpow$Reservoir.name,hydpow));names(hydpow1)<-c("year","Agent_ID","Reservoir","Hydro.Power");hydpow_save<-rbind(hydpow_save,hydpow1)
+reservoir_mekong <- read.table("Reservoir_Mekong.txt");colnames(reservoir_mekong)[1:ncol(reservoir_mekong)] <- c("year","cal_day",paste0("Volume_Res",1:resnum),paste0("SurfArea_Res",1:resnum),paste0("Outflow_Res",1:resnum))
+daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:resnum)]/86400;names(daily_res_Q)<-paste0("daily_Q_res",1:resnum);
+daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:resnum)])^res_b+res_c));names(daily_res_head)<-paste0("daily_head_res",1:resnum)
+raw_hydpow <- data.frame(mapply('*',((1000*9.81*daily_res_head*daily_res_Q)/1000000000*24),res_eff));names(raw_hydpow)<-paste0("raw_hydpow_res",1:resnum);raw_hydpow <- as.matrix(raw_hydpow)
+max_hydpow <- matrix(capacity_hydpow,nrow=ncol(raw_hydpow),ncol=nrow(raw_hydpow));max_hydpow <- t(max_hydpow)
+daily_hydpow <- pmin(raw_hydpow,max_hydpow);colnames(daily_hydpow)<-paste0("daily_hydpow_res",1:resnum)
+hydpow <-colSums(daily_hydpow);names(hydpow)<-paste0("hydpow_res",1:resnum)
+nn=rep(n,nrow(readhydpow));resagent<-ag_sb$Agent_ID[ag_sb$SB_ID%in%readhydpow$subbasin..0106.setup.]
+hydpow1<-data.frame(cbind(nn,resagent,readhydpow$Reservoir.name,hydpow));names(hydpow1)<-c("year","Agent_ID","Reservoir","Hydro.Power");
+hydpow_save<-rbind(hydpow_save,hydpow1);hydpow_save["Target"]<- min_hydpow; hydpow_save["Status"]<- readhydpow$Status; 
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 write.csv(crop_mekongsum, file = "crop_summary.csv",row.names = FALSE)
