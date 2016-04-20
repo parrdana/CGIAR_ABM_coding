@@ -117,7 +117,6 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
     crop_area <- select(crop_hru,SB_ID,HRU_ID) %>% mutate(AreaFrac = HRU_FR_by_R)
   }
   
-  
   New_Eff <- NULL
   
   New_Eff <- filter(crop_mekong, year == n & HRU_ID %in% c(1,3)) %>% 
@@ -406,7 +405,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   #this is a temporary fake file created based on the calculated IHAs -> this will be replaced by the actual data we obtain
   
   ############################################################################################################################
-  #Checking requirements (IHA's)
+  #Checking requirements (IHA's) and determining level of insufficiency
   #if we want to limit which IHA's we care about, then reduce IHAnew to those values only
   ############################################################################################################################
   hotIHA<-data.frame(matrix(0,ncol = (ncol(IHAnew)-1), nrow = hotnum));#hotIHA contains the IHA information for each hotspot
@@ -481,7 +480,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
                 currentout=currentout+currentout1;
               }
               currentout=currentout/nfail;#mean month's outflow in m^3/s (over last nfail years)
-              changeout<-ifelse(IHAfail[h,m+1]<=currentout*scaling,IHAfail[h,m+1],currentout*scaling);#IHAfail also in terms of m^3/s
+              changeout<-ifelse(abs(IHAfail[h,m+1])<=currentout*scaling,abs(IHAfail[h,m+1]),currentout*scaling);#IHAfail also in terms of m^3/s
               #not only have an absolute threshold (minoutthres and maxoutthres below) but a threshold of 1 time change (above)
               if (morl>0){#if demand for more water
                 request <- ifelse(currentout+changeout <= minoutthres[rrr,m],currentout+changeout,minoutthres[rrr,m]);
@@ -507,7 +506,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
               currentout=currentout+currentout1;
             }
             currentout=currentout/nfail;#mean month's outflow in m^3/s (over last nfail years)
-            changeout<-ifelse(IHAfail[h,m+1]<=currentout*scaling,IHAfail[h,m+1],currentout*scaling);
+            changeout<-ifelse(abs(IHAfail[h,m+1])<=currentout*scaling,abs(IHAfail[h,m+1]),currentout*scaling);
             #not only have an absolute threshold (minoutthres below) but a threshold of 1 time change (above)
             if (morl>0){#if demand for more water
               request <- ifelse(currentout+changeout <= minoutthres[rrr,m],currentout+changeout,minoutthres[rrr,m]);
@@ -541,13 +540,23 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
                       currentflow<-currentflow+IHA[(IHA$sub_ID==s)&(IHA$year==n-nn+1),m+2];
                     }
                     currentflow=currentflow/nfail;#mean monthly flow in subbasin (over last nfail years)
-                    changeirr<-ifelse(IHAfail[h,m+1]<=currentflow*scaling2,IHAfail[h,m+1],currentflow*scaling2);
+                    changeirr<-ifelse(abs(IHAfail[h,m+1])<=currentflow*scaling2,abs(IHAfail[h,m+1]),currentflow*scaling2);
                     #have a threshold of 1 time change (above) (NOTE: but so far no absolute threshold- how?)
-                    hru=(s-1)*8+1;#current HRU (bc Irri_minflow at HRU scale)
-                    IRR_eff_by_R$Irri_minflow[hru]<-currentflow+changeirr;
-                    IRR_eff_by_R$Irri_minflow[hru+2]<-currentflow+changeirr;
-                    #always the same Irri_minflow for rice and maize but have to set both (hru's 1 and 3)
-                    IHAfailcount[h,m+1]=0#after making decision, reset year counter for problem years in a row
+                    if (morl>0){
+                      hru=(s-1)*8+1;#current HRU (bc Irri_minflow at HRU scale)
+                      IRR_eff_by_R$Irri_minflow[hru]<-currentflow+changeirr;
+                      IRR_eff_by_R$Irri_minflow[hru+2]<-currentflow+changeirr;
+                      #always the same Irri_minflow for rice and maize but have to set both (hru's 1 and 3)
+                      IHAfailcount[h,m+1]=0#after making decision, reset year counter for problem years in a row
+                    }else{
+                      if ((morl<0) & (IRR_eff_by_R$Irri_minflow[hru]>0)){
+                        hru=(s-1)*8+1;#current HRU (bc Irri_minflow at HRU scale)
+                        IRR_eff_by_R$Irri_minflow[hru]<-ifelse((currentflow-changeirr)>0,(currentflow-changeirr),0);
+                        IRR_eff_by_R$Irri_minflow[hru+2]<-ifelse((currentflow-changeirr)>0,(currentflow-changeirr),0);
+                        #always the same Irri_minflow for rice and maize but have to set both (hru's 1 and 3)
+                        IHAfailcount[h,m+1]=0#after making decision, reset year counter for problem years in a row
+                      }
+                    }
                   }else{}#do nothing if voted against and do not reset IHAfailcount
             
                 }else{#if crop production has no insufficiency then no need to vote for decision-> go ahead
@@ -556,13 +565,23 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
                     currentflow<-currentflow+IHA[(IHA$sub_ID==s)&(IHA$year==n-nn+1),m+2];
                   }
                   currentflow=currentflow/nfail;#mean monthly flow in subbasin (over last nfail years)
-                  changeirr<-ifelse(IHAfail[h,m+1]<=currentflow*scaling2,IHAfail[h,m+1],currentflow*scaling2);
+                  changeirr<-ifelse(abs(IHAfail[h,m+1])<=currentflow*scaling2,abs(IHAfail[h,m+1]),currentflow*scaling2);
                   #have a threshold of 1 time change (above) (NOTE: but so far no absolute threshold- how?)
-                  hru=(s-1)*8+1;#current HRU (bc Irri_minflow at HRU scale)
-                  IRR_eff_by_R$Irri_minflow[hru]<-currentflow+changeirr;
-                  IRR_eff_by_R$Irri_minflow[hru+2]<-currentflow+changeirr;
-                  #always the same Irri_minflow for rice and maize but have to set both (hru's 1 and 3)
-                  IHAfailcount[h,m+1]=0;#after making decision, reset year counter for problem years in a row
+                  if (morl>0){
+                    hru=(s-1)*8+1;#current HRU (bc Irri_minflow at HRU scale)
+                    IRR_eff_by_R$Irri_minflow[hru]<-currentflow+changeirr;
+                    IRR_eff_by_R$Irri_minflow[hru+2]<-currentflow+changeirr;
+                    #always the same Irri_minflow for rice and maize but have to set both (hru's 1 and 3)
+                    IHAfailcount[h,m+1]=0;#after making decision, reset year counter for problem years in a row
+                  }else{
+                    if ((morl<0) & (IRR_eff_by_R$Irri_minflow[hru]>0)){
+                      hru=(s-1)*8+1;#current HRU (bc Irri_minflow at HRU scale)
+                      IRR_eff_by_R$Irri_minflow[hru]<-ifelse((currentflow-changeirr)>0,(currentflow-changeirr),0);
+                      IRR_eff_by_R$Irri_minflow[hru+2]<-ifelse((currentflow-changeirr)>0,(currentflow-changeirr),0);
+                      #always the same Irri_minflow for rice and maize but have to set both (hru's 1 and 3)
+                      IHAfailcount[h,m+1]=0#after making decision, reset year counter for problem years in a row
+                    }
+                  }
                 }
               }else{}#if no agriculture, cannot make any difference with irri_minflow
             }#subbasin loop end
@@ -571,7 +590,6 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
       }else{} #there has not been a monthly flow insufficiency for this hotspot for nfail years in a row so do nothing
     }#month loop end
   }#hotspot loop end
-  
   
   #save this data for summary tables
   nn<-rep(n,hotnum);
