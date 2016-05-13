@@ -4,6 +4,14 @@ library(magrittr)
 library(gdata)
 
 ###################################################################################
+# Scenario
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#we will need a file or something from web-user team that tells which scenario
+scenario<-"Complete"
+#scenario<-"UC"
+#scenario<-"Planned"
+
+###################################################################################
 # initialization 
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 res_ini <- read.table(file="Reservoir_initial.txt")
@@ -458,8 +466,8 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   #contains information for both present day and future scenarios (complete vs non-complete lists)
   
   nfail=3#number of years in a row with same IHA problem before action is taken
-  scaling=0.2;#for 1 time change threshold in outlfow(0.2=20%increase)
-  scaling2=0.1;#for 1 time change threshold in Irri_minflow
+  scaling=0.2;#for 1 time change threshold in outlfow (0.2 = 20% increase)
+  scaling2=0.2;#for 1 time change threshold in Irri_minflow
   
   #the following deals with monthly flow-based decisions
   for (h in 1:hotnum){#hotspot number
@@ -607,6 +615,27 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   hru_out<-crop_hru[,-8];hru_out<-hru_out[,-3];hru_out<-cbind(hru_out,HRU_FR_by_R);hru_out<-hru_out[c(1,2,7,3,4,5,6)]
   #this uses the initial file as a template because the write out mimics that file. Irrigation minimum flow is removed since that is not suppose
   #to be written out in this file, however the initial areas are replaced with what was decided upon by the crop section of the ABM
+  
+  #!!!!!!!depending on scenario, after the 1st year, need to limit what dams are included in the simulation!!!!!!!!!! 
+  if (scenario=="Complete"){
+    for (r in 1:35){
+      if( (readhydpow$Status[r]=="UC") | (readhydpow$Status[r]=="Planned") | (readhydpow$Status[r]=="Possible") ){#if "UC" or "Planned" or possible then set target and target # of days to zero
+        starg[r,] <- 0;
+        ndtargr[r] <- 0;
+        minout[r,] <-99999999999;
+      }
+    }
+  }
+  if (scenario=="UC"){
+    for (r in 1:35){
+      if( (readhydpow$Status[r]=="Planned") | (readhydpow$Status[r]=="Possible") ){#if "UC" or "Planned" or possible then set target and target # of days to zero
+        starg[r,] <- 0;
+        ndtargr[r] <- 0;
+        minout[r,] <-99999999999;
+      }
+    }
+  }#if scenario is "Planned" then don't need to do anything (include all dams)
+  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
   res<-cbind(starg,ndtargr,maxout,minout)
 
