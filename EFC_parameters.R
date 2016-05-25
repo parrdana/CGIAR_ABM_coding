@@ -82,6 +82,27 @@ for (h in 1:hotnum){
   return2[h]<-quantile(peaks[,h+1], .50);
 }
 
+###### now to find monthly low flows for each hotspot
+#defined by less than mean for that month
+
+#make vectors for each month's flow
+
+jan<-rep(0,hotnum);feb<-rep(0,hotnum);mar<-rep(0,hotnum);apr<-rep(0,hotnum);may<-rep(0,hotnum);jun<-rep(0,hotnum);
+jul<-rep(0,hotnum);aug<-rep(0,hotnum);sep<-rep(0,hotnum);oct<-rep(0,hotnum);nov<-rep(0,hotnum);dec<-rep(0,hotnum);
+for (h in 1:hotnum){
+  jan[h]<-mean(hotflow[(hotflow$cal_day>=1)&(hotflow$cal_day<=31),h+2]);
+  feb[h]<-mean(hotflow[(hotflow$cal_day>=32)&(hotflow$cal_day<=59),h+2]);
+  mar[h]<-mean(hotflow[(hotflow$cal_day>=60)&(hotflow$cal_day<=90),h+2]);
+  apr[h]<-mean(hotflow[(hotflow$cal_day>=91)&(hotflow$cal_day<=120),h+2]);
+  may[h]<-mean(hotflow[(hotflow$cal_day>=121)&(hotflow$cal_day<=151),h+2]);
+  jun[h]<-mean(hotflow[(hotflow$cal_day>=152)&(hotflow$cal_day<=181),h+2]);
+  jul[h]<-mean(hotflow[(hotflow$cal_day>=182)&(hotflow$cal_day<=212),h+2]);
+  aug[h]<-mean(hotflow[(hotflow$cal_day>=213)&(hotflow$cal_day<=243),h+2]);
+  sep[h]<-mean(hotflow[(hotflow$cal_day>=244)&(hotflow$cal_day<=273),h+2]);
+  oct[h]<-mean(hotflow[(hotflow$cal_day>=274)&(hotflow$cal_day<=304),h+2]);
+  nov[h]<-mean(hotflow[(hotflow$cal_day>=305)&(hotflow$cal_day<=334),h+2]);
+  dec[h]<-mean(hotflow[(hotflow$cal_day>=335)&(hotflow$cal_day<=365),h+2]);
+}
 
 ######The final step is to determine what constitutes an extreme low flow ->tenth percentile of all daily LOW flows
 for (h in 1:hotnum){
@@ -102,7 +123,7 @@ for (h in 1:hotnum){
 
 
 ######Last step of PART 1 is to write out the EFC parameters necessary to constitute a small flow, a large flood, a high flood pulse and an extreme low flow
-EFC_Param<-cbind(sevfifth,return10,return2,xtremelow);
-colnames(EFC_Param)[1:ncol(EFC_Param)]<-c("high","large","small","xtremelow");
+EFC_Param<-cbind(sevfifth,return10,return2,xtremelow,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec);
+colnames(EFC_Param)[1:ncol(EFC_Param)]<-c("high","large","small","xtremelow","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec");
 write.csv(EFC_Param, file = "EFC_Param.csv");
 

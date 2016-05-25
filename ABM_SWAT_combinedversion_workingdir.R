@@ -3,34 +3,83 @@ library(dplyr)
 library(magrittr)
 library(gdata)
 
-###################################################################################
+
+########################################################################################
+#Survey weights for agriculture, hydropower, ecosystems & WEB USER INPUT
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#both "Level of Cooperation.csv" and "Irr_Eff_minmax.csv" are files that can be created by users of the webtool
+readweights <- read.csv("Survey_Retabulated.csv",stringsAsFactors=FALSE)
+
+readloc <- read.csv("Level of Cooperation.csv",stringsAsFactors=FALSE)
+
+priorities <- data.frame(readloc$Agent_ID,readweights$Agriculture..,readweights$Hydropower..,readweights$Ecosystem.Services..,readloc$Level.of.Cooperation)
+colnames(priorities)<-c("Agent_ID","A_weight","H_weight","E_weight","LOC")
+
+irr_minmax <- read.csv("Irr_Eff_minmax_v2.csv",stringsAsFactors=FALSE)
+colnames(irr_minmax)<-c("SB_ID","min_irr_eff","max_irr_eff")
+#defines the starting place for irr_eff as well as the cap at the subbasin level
+
 # Scenario
-#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #we will need a file or something from web-user team that tells which scenario
 scenario<-"Complete"
 #scenario<-"UC"
 #scenario<-"Planned"
 
+
 ###################################################################################
 # initialization 
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-res_ini <- read.table(file="Reservoir_initial.txt")
-starg <- res_ini[,6:17]
-ndtargr <- res_ini[,18]
-maxout <-res_ini[,19:30]
-minout <- res_ini[,31:42]
 
-#Need thresholds for decision changes
+#Agent subbasin relationship
+ag_sb <- read.csv("MK_Agent_Sub_basins_v2.csv") %>% rename(SB_ID = Subbasin) #agent-subbasin relationship
+sbnum=nrow(ag_sb);#number of subbasins
+hotnum=max(ag_sb$Hotspot_Number);#number of hotspots
+
+#initial SWAT paramters for reservoir operations
+res_ini <- read.table(file="Reservoir_initial.txt")
+resnum=nrow(res_ini);#number of reservoirs
+starg <- res_ini[,6:17]#target storage
+ndtargr <- res_ini[,18]#number of days to reach target
+maxout <-res_ini[,19:30]#max outflow
+minout <- res_ini[,31:42]#min outlfow
+
+#Need absolute thresholds for max and min outflow for decision changes
 maxoutthres <-res_ini[,19:30]*0.5;
 minoutthres <- res_ini[,31:42]+100000;
 #!!!! warning !!!! these will need to be set more realistically (perhaps off of average monthly outflows once calibrated)
+
+#data needed for hydropower calculation
+readhydpow <- read.csv("reservoir_data_for_ABM_v2.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
+mean_hydpow <- as.numeric(readhydpow$Mean.Annual.Energy..GWh.) #(GWh)
+capacity_hydpow <- as.numeric(readhydpow$Daily.Capacity..GWh.) #(GWh)
+min_hydpow <- mean_hydpow *0.9# set min at 90% of mean for now
+res_eff <- readhydpow$Efficiency
+res_a <- readhydpow$a
+res_b <- readhydpow$b
+res_c <- readhydpow$c
+
+#trigger to keep track of long term hydropower generation and crop production and whether they fall below minimum
+hptrig <- matrix(rep(FALSE,resnum*10),resnum); croptrig <- matrix(rep(FALSE,sbnum*10),sbnum);
+hptrigcount <- rep(0,resnum)#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
+
+#Reads parameters necessary to quantify EFCs (explained in detail in EFC calcuation)
+EFC_Param<-read.csv("EFC_Param.csv");rownames(EFC_Param) <- EFC_Param[,1]; EFC_Param[,1] <- NULL
+#extreme low is threshold for extreme low flow day
+#high is threshold for high pulse
+#small is threshold for small flood (also upper threshold for high pulse)
+#large is threshold for large flood (also upper threshold for small flood)
+#months are for monthly low flows
+
+#counts number of years in a row with ecosystem insufficiencies (needs to be initialized before year loop)
+IHAfailcount<-data.frame(matrix(0,ncol = 33, nrow = hotnum))#this stores the years in a row IHA values are insufficient
+# the ncol above may need to be edited to match the number of IHA's examined in "IHAnew" + 1 (32+1=33)
+IHAfailcount[,1]=1:hotnum;colnames(IHAfailcount)[1:ncol(IHAfailcount)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
 
 #day numbers in each month- used in ecossytem section
 ndays<-matrix(0,ncol = 12, nrow = 2);ndays[1,1]<-1;ndays[2,1]<-31;ndays[1,2]<-32;ndays[2,2]<-59;ndays[1,3]<-60;ndays[2,3]<-90;ndays[1,4]<-91;ndays[2,4]<-120;ndays[1,5]<-121;ndays[2,5]<-151;ndays[1,6]<-152;ndays[2,6]<-181;
 ndays[1,7]<-182;ndays[2,7]<-212;ndays[1,8]<-213;ndays[2,8]<-243;ndays[1,9]<-244;ndays[2,9]<-273;ndays[1,10]<-274;ndays[2,10]<-304;ndays[1,11]<-305;ndays[2,11]<-334;ndays[1,12]<-335;ndays[2,12]<-365;
 
-### THIS CROP YIELD DATA DOES NOT CHANGE ########
-ag_sb <- read.csv("MK_Agent_Sub_basins_v2.csv") %>% rename(SB_ID = Subbasin) #agent-subbasin relationship
+#crop yield targets based on SPAM data and zonal statistics
 cy_tar <- read.csv("TargetYields_rice_maize_v2.csv") %>% rename(SB_ID = subbasin) %>% #target crop yields
   gather(key=Crop,value=TarYields,-SB_ID) %>% 
   separate(Crop,into = c("CName","Unit"),sep = "_") %>% 
@@ -39,44 +88,18 @@ cy_tar <- read.csv("TargetYields_rice_maize_v2.csv") %>% rename(SB_ID = subbasin
   left_join(ag_sb,by="SB_ID") %>% 
   select(Agent_ID,SB_ID,HRU_ID,TarYields)
 
+#initial SWAT paramters for crops
 crop_hru <- read.table("Crop_initial.txt")
 colnames(crop_hru) <- c("SB_ID","HRU_ID","AreaFrac","PlantDate","IrriHeat","Irri_TS","Irri_eff","Irri_minflow")
 
 costfactor = 1000 #this is the cost of increasing efficiency by 1%
-
-resnum=nrow(res_ini);#number of reservoirs
-sbnum=nrow(ag_sb);#number of subbasins
-hotnum=max(ag_sb$Hotspot_Number);#number of hotspots
-
-#trigger to keep track of long term hydropower generation and crop production and whether they fall below minimum
-hptrig <- matrix(rep(FALSE,resnum*10),resnum); croptrig <- matrix(rep(FALSE,sbnum*10),sbnum);
-hptrigcount <- rep(0,resnum)#this count is used to ensure that it has been 10 years since start of simulation or 10 years since hydropower regulations have been altered
-
-#counts number of years in a row with ecosystem insufficiencies (needs to be initialized before year loop)
-IHAfailcount<-data.frame(matrix(0,ncol = 33, nrow = hotnum))#this stores the years in a row IHA values are insufficient
-# the ncol above may need to be edited to match the number of IHA's examined in "IHAnew" + 1 (32+1=33)
-IHAfailcount[,1]=1:hotnum;colnames(IHAfailcount)[1:ncol(IHAfailcount)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
-
-########################################################################################
-#Survey weights for agriculture, hydropower, ecosystems & Level of Cooperation for each agent
-#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#both "Level of Cooperation.csv" and "Irr_Eff_minmax.csv" are files that can be created by users of the webtool
-readweights <- read.csv("Survey_Retabulated.csv",stringsAsFactors=FALSE)
-readloc <- read.csv("Level of Cooperation.csv",stringsAsFactors=FALSE)
-priorities <- data.frame(readloc$Agent_ID,readweights$Agriculture..,readweights$Hydropower..,readweights$Ecosystem.Services..,readloc$Level.of.Cooperation)
-colnames(priorities)<-c("Agent_ID","A_weight","H_weight","E_weight","LOC")
-
-irr_minmax <- read.csv("Irr_Eff_minmax_v2.csv",stringsAsFactors=FALSE)
-colnames(irr_minmax)<-c("SB_ID","min_irr_eff","max_irr_eff")
-#defines the starting place for irr_eff as well as the cap at the subbasin level
-
 
 #%%%%%%%%%%%%%%%%%%%%%%%%  SWAT  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 file.create("SWAT_flag.txt")
 system("swat2012.exe",wait=FALSE,invisible=FALSE)
 n<-1
 
-while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
+while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
 {
   while (file.exists("SWAT_flag.txt"))
   {
@@ -181,16 +204,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   # Hydropower generation calculation, constraints, and flags
   ###!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
-  if (n==1){
-    readhydpow <- read.csv("reservoir_data_for_ABM_v2.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
-    mean_hydpow <- as.numeric(readhydpow$Mean.Annual.Energy..GWh.) #(GWh)
-    capacity_hydpow <- as.numeric(readhydpow$Daily.Capacity..GWh.) #(GWh)
-    min_hydpow <- mean_hydpow *0.9# set min at 90% of mean for now
-    res_eff <- readhydpow$Efficiency
-    res_a <- readhydpow$a
-    res_b <- readhydpow$b
-    res_c <- readhydpow$c}
-  if (n>3){min_hydpow <- min_hydpow*1.07}#increase 7% per year (first year of simulation is year 3)
+  #if (n>3){min_hydpow <- min_hydpow*1.07}#increase 7% per year (first year of simulation is year 3)
   #power demands  expected to increase by about 7% per year between (2010 and 2030)
   
   daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:resnum)]/86400;
@@ -227,6 +241,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
     hydpow_save<-rbind(hydpow_save,hydpow1)}
   #hydropower needs to be saved for each year for later analysis (summary tables)
   
+  #the following intializes things used later to check if hydropower is low and if so change irr_eff for current year
   hpflag <- rep(0,sbnum)#number of rows = number of subbasins
   res_exist <- rep(0,sbnum); 
   res_exist=ifelse(ag_sb$SB_ID %in% readhydpow$subbasin[readhydpow$Status=="Complete"],1,0)
@@ -252,19 +267,19 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
         hptrig[r,10]<-hptrig[r,9];hptrig[r,9]<-hptrig[r,8];hptrig[r,8]<-hptrig[r,7];hptrig[r,7]<-hptrig[r,6];hptrig[r,6]<-hptrig[r,5];hptrig[r,5]<-hptrig[r,4];hptrig[r,4]<-hptrig[r,3];hptrig[r,3]<-hptrig[r,2];hptrig[r,2]<-hptrig[r,1];hptrig[r,1]<-TRUE;
         if (all(hptrig[])==TRUE & hptrigcount[r]>=10){#if hydropower generated is less than the minimum over last 10 years 
           #decrease number of days required to reach target and target storage during dry season
-          starg[r,-(5:10)] <- starg[r,-(5:10)]*0.7
+          starg[r,-(2:5)] <- starg[r,-(2:5)]*0.7
           ndtargr[r] <- ndtargr[r]-4
           hptrigcount[r]=0#reset hydropower trigger count after changing reservoir managemnt practices to ensure it will not be changed for at least 10 more years (if ever again)
           
         }else if (sum(hptrig[r,])==9 & hptrigcount[r]>=10){#if hydropower generated is less than the minimum for 9 of last 10 years
           #decrease number of days required to reach target and target storage to a lesser extent than for 10/10 years
-          starg[r,-(5:10)] <- starg[r,-(5:10)]*0.8
+          starg[r,-(2:5)] <- starg[r,-(2:5)]*0.8
           ndtargr[r] <- ndtargr[r]-3
           hptrigcount[r]=0#reset hydropower trigger count
           
         }else if (sum(hptrig[r,])==8 & hptrigcount[r]>=10){#if hydropower generated is less than the minimum for 8 of last 10 years
           #decrease number of days required to reach target and target storage to a lesser extent than for 9/10 years
-          starg[r,-(5:10)] <- starg[r,-(5:10)]*0.9
+          starg[r,-(2:5)] <- starg[r,-(2:5)]*0.9
           ndtargr[r] <- ndtargr[r]-2
           hptrigcount[r]=0#reset hydropower trigger count
           
@@ -300,18 +315,21 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   final_Irri_eff[is.na(final_Irri_eff)==T] <- 0
   IRR_eff_by_R<-mutate(IRR_eff_by_R,New_Irri_eff =final_Irri_eff)
   
-  ###########################################################
+  #################################################################################################################################
   #Post-calculation for (From SWAT output) ecosystem services
-  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  
+  #Dana's note: any parameter that is not desirable can be removed but all IHA's and EFC's are calculated now
+  
   ############ ecosystem requirements - IHAs !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   columnend<-(sbnum+2); ecoyear<-flow_mekong[which(flow_mekong$year==n),3:columnend];
   #flow in m^3/s
    
-  #Magnitude Timing (IHA 1:12 - mean streamflow for each calendar month m^3/s)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #Magnitude Timing (IHA 1:12 - mean streamflow for each calendar month m^3/s)
   jan<-as.vector(colMeans(ecoyear[1:31,]));feb<-as.vector(colMeans(ecoyear[32:59,]));mar<-as.vector(colMeans(ecoyear[60:90,]));apr<-as.vector(colMeans(ecoyear[91:120,]));may<-as.vector(colMeans(ecoyear[121:151,]));jun<-as.vector(colMeans(ecoyear[152:181,]));
   jul<-as.vector(colMeans(ecoyear[182:212,]));aug<-as.vector(colMeans(ecoyear[213:243,]));sep<-as.vector(colMeans(ecoyear[244:273,]));oct<-as.vector(colMeans(ecoyear[274:304,]));nov<-as.vector(colMeans(ecoyear[305:334,]));dec<-as.vector(colMeans(ecoyear[335:365,]));
   
-  #Magnitude Duration (IHA 13:22 - annual max/min 1,3,7,30,90-day means)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #Magnitude Duration (IHA 13:22 - annual max/min 1,3,7,30,90-day means)
   day1min<-apply(ecoyear,2,min); day1max<-apply(ecoyear,2,max)
   
   for (t in seq(1,365,90)){
@@ -366,10 +384,10 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   day3max<-apply(hold3[1:363,],2,max);day3min<-apply(hold3[1:363,],2,min)
   #will be 363 saved 3day values in hold3 for 3day means
 
-  #Timing (IHA 23:24 - day of 1-day min and max)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #Timing (IHA 23:24 - day of 1-day min and max)
   mindate<-apply(ecoyear,2,which.min); maxdate<-apply(ecoyear,2,which.max)
   
-  #Magnitude Frequency Duration (IHA 25:28 - number of low/high pulses, mean duration of low/high pulses)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #Magnitude Frequency Duration (IHA 25:28 - number of low/high pulses, mean duration of low/high pulses)
   # to quantify these we need to establish thresholds for what constitutes a high or low pulse- e.g. 75percentile,25percentile of values over long period of time (pre-simulation)
   highpulse<-apply(ecoyear,2,max)*.8; lowpulse<-apply(ecoyear,2,max)*.2; #high and low pulse threshold NEED to be taken from historic data once obtained
   counthigh<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear));countlow<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear))#reinitialize each year
@@ -382,12 +400,14 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   lopulse_dur<-apply(countlow,2,function(x){
     lorle<-rle(x);mean(lorle$lengths[lorle$values==TRUE])})
     
-  #Frequency Rate of Change (IHA 29:32 - mean of positive/negative differences between daily values, number of rises/falls)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  #Frequency Rate of Change (IHA 29:32 - mean of positive/negative differences between daily values, number of rises/falls)
   ecochange1<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));ecochange2<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));
   ecochange1[ecochange1<=0]<-NA; ecochange2[ecochange2>=0]<-NA;
   mean_increase <- colMeans(ecochange1,na.rm=TRUE); mean_decrease <- colMeans(ecochange2,na.rm=TRUE);
   number_rises <- apply(ecochange1, 2, function(x) length(which(!is.na(x)))); number_falls <- apply(ecochange2, 2, function(x) length(which(!is.na(x))))
   
+  #save IHA's for summary tables
+  #"IHAnew" holds IHA's for current year and "IHA" holds all years
   if (n==1){
     IHA <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
     IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
@@ -401,10 +421,229 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
     rownames(IHAnew) <- NULL
     IHA <- rbind(IHA,IHAnew)
   }
-  #"IHAnew" holds IHA's for current year and "IHA" holds all years
- 
+  
+  
+  ############ ecosystem requirements - EFCs !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  # Dana's notes:
+  # The idea here is that parameters provided by the EFC_Param file can be used to calculate what is a small flood, a large flood,
+  # a high pulse and an extreme low flow is so that the EFC statistics can be calculated here. 
+  #
+  # That EFC_parameter.R code which creates the EFC_Param file should be redone with calibrated SWAT stream flow or desirable stream flow
+  # what you use is up to what stream flow you want to use to define small flood, large flood, high pulse, extreme flow
+  #
+  # This following part of the code (EFC calculation) can be used outside the ABM to determine target statistics for a desirable (or historic) stream flow
+  # Or another approach can be used to determine target statistics
+  #
+  # Although just about all EFC statistics are found below just in case they are needed (Eric has not provided what is critical for all categories)
+  # rise and fall rates are not found- Eric specifically said in the skype call and excel sheet that those are not impt and way to specific
+  # and they would take more computational time than the rest of the statistics anyways
+  ###########!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  
+  #First step is to find stream flow for each hotspot rather than for subbasins
+  #IHA's were calculated for each subbasin as we did not yet have hotspot data during the time they were made
+  hotflow<-data.frame(matrix(0,ncol = (hotnum+2), nrow = nrow(flow_mekong[flow_mekong$year==n,])));#contains the stream flow for each hotspot
+  hotflow[,1]=flow_mekong[flow_mekong$year==n,1];hotflow[,2]=flow_mekong[flow_mekong$year==n,2];
+  colnames(hotflow)[1:ncol(hotflow)]<-c("year","cal_day",paste0("Flow_HS_",1:(hotnum)));
+  
+  for (h in 1:hotnum){
+    countnum=0;
+    for (s in 1:sbnum){
+      if (ag_sb$Hotspot_Number[s]==h){
+        countnum=countnum+1;#most hotspots are spread across multiple subbasins
+        hotflow[,h+2]=hotflow[,h+2]+flow_mekong[flow_mekong$year==n,s+2];
+      }
+    }
+    hotflow[,h+2]=hotflow[,h+2]/countnum #currently just taking average of all subbasins that contain the hotspot
+  }
+  
+  #!!!!!!monthly mean low flows (mmlf)
+  #low flow here is defined as below 50th % for that particular month and hotspot based on stream flow entered into EFC_parameters.R code
+  #mmlf is monthly mean low flows
+  #NaN means there were no low flows for that particular month in that particular year (0 seems misleading)
+  mmlf <- matrix(rep(0,hotnum*12),hotnum);
+  for (h in 1:hotnum){
+    findmean=rep(0,12);count=rep(0,12);
+    for (d in 1:nrow(hotflow)){
+      if ((ndays[1,1]<=d)&(d<=ndays[2,1])){mm=1};if ((ndays[1,2]<=d)&(d<=ndays[2,2])){mm=2};if ((ndays[1,3]<=d)&(d<=ndays[2,3])){mm=3};if ((ndays[1,4]<=d)&(d<=ndays[2,4])){mm=4};if ((ndays[1,5]<=d)&(d<=ndays[2,5])){mm=5};if ((ndays[1,6]<=d)&(d<=ndays[2,6])){mm=6}
+      if ((ndays[1,7]<=d)&(d<=ndays[2,7])){mm=7};if ((ndays[1,8]<=d)&(d<=ndays[2,8])){mm=8};if ((ndays[1,9]<=d)&(d<=ndays[2,9])){mm=9};if ((ndays[1,10]<=d)&(d<=ndays[2,10])){mm=10};if ((ndays[1,11]<=d)&(d<=ndays[2,11])){mm=11};if ((ndays[1,12]<=d)&(d<=ndays[2,12])){mm=12}
+       if (EFC_Param[h,mm+4]>hotflow[d,h+2]){#if it is a low flow day for that particular month
+        count[mm]=count[mm]+1;
+        findmean[mm]=findmean[mm]+hotflow[d,h+2];
+      }
+    }
+    mmlf[h,]=findmean/count;
+  }
+  
+  #!!!!!!extreme low flow events (elfe)
+  #elfemean is mean of elf days
+  #elfedur is mean duration of elfe
+  #elfenum is frequency of elfe
+  #elfepeak is absolute peak of elfe
+  #elfepeakday is julian day of absolute peak of elfe
+  elfedur=rep(0,hotnum); elfenum=rep(0,hotnum); elfepeak=rep(9999999999,hotnum); elfepeakday=rep(NaN,hotnum); elfemean=rep(NaN,hotnum); 
+  for (h in 1:hotnum){
+    countdur=0; #used to count duration of event
+    findmean=0; #used to find mean flow of events
+    count=0; #total number of elf days
+    for (d in 1:nrow(hotflow)){
+      if (hotflow[d,h+2]<EFC_Param$xtremelow[h]){#if today is an extreme low flow day
+        if (hotflow[d,h+2]<elfepeak[h]){
+          elfepeak[h]=hotflow[d,h+2];
+          elfepeakday[h]=hotflow[d,2];
+        }
+        findmean=findmean+hotflow[d,h+2];
+        count=count+1;
+        countdur=countdur+1;
+        previous="yes";
+        if (hotflow$cal_day[d]==max(hotflow$cal_day)){#if last day in the year
+          elfenum[h]=elfenum[h]+1;#then add to frequency
+          elfedur[h]=elfedur[h]+countdur;#add to duration total
+        }
+      }
+      if (hotflow[d,h+2]>EFC_Param$xtremelow[h]){#if today is not an extreme low flow day
+        if (previous=="yes"){#if the previous day was an extreme low flow day but today isnt 
+          elfenum[h]=elfenum[h]+1;#then add to frequency
+          elfedur[h]=elfedur[h]+countdur;#add to duration total
+          countdur=0;#reset counter for duration of specific event
+        }
+        previous="no";
+      }
+    }
+    elfemean[h]=findmean/count;#find mean flow
+    elfedur[h]=elfedur[h]/elfenum[h];#find mean duration
+  }
+
+  #!!!!!!high flow pulses (hfp)
+  #hfpmean is mean of hfp days
+  #hfpdur is mean duration of hfp
+  #hfpnum is frequency of hfp
+  #hfppeak is absolute peak of hfp
+  #hfppeakday is julian day of absolute peak of hfp
+  hfpdur=rep(0,hotnum); hfpnum=rep(0,hotnum); hfppeak=rep(0,hotnum); hfppeakday=rep(NaN,hotnum); hfpmean=rep(NaN,hotnum); 
+  for (h in 1:hotnum){
+    countdur=0; #used to count duration of pulses
+    findmean=0; #used to find mean flow of pulses
+    count=0; #total number of hfp days
+    for (d in 1:nrow(hotflow)){
+      if ((EFC_Param$high[h]<hotflow[d,h+2])&(hotflow[d,h+2]<=EFC_Param$small[h])){#if today is a high pulse day
+        if (hotflow[d,h+2]>hfppeak[h]){
+          hfppeak[h]=hotflow[d,h+2];
+          hfppeakday[h]=hotflow[d,2];
+        }
+        findmean=findmean+hotflow[d,h+2];
+        count=count+1;
+        countdur=countdur+1;
+        previous="yes";
+        if (hotflow$cal_day[d]==max(hotflow$cal_day)){#if last day in the year
+          hfpnum[h]=hfpnum[h]+1;#then add to frequency
+          hfpdur[h]=hfpdur[h]+countdur;#add to duration total
+        }
+      }
+      if ((EFC_Param$high[h]>=hotflow[d,h+2])|(hotflow[d,h+2]>EFC_Param$small[h])){#if today is not high pulse day
+        if (previous=="yes"){#if the previous day was a high flow pulse day but today isnt 
+          hfpnum[h]=hfpnum[h]+1;#then add to frequency
+          hfpdur[h]=hfpdur[h]+countdur;#add to duration total
+          countdur=0;#reset counter for duration of specific event
+        }
+        previous="no";
+      }
+    }
+    hfpmean[h]=findmean/count;#find mean flow
+    hfpdur[h]=hfpdur[h]/hfpnum[h];#find mean duration
+  }
+  
+  #!!!!!!small flood events (sfe)
+  #sfemean is mean of sfe days
+  #sfedur is mean duration of sfe
+  #sfenum is frequency of sfe
+  #sfepeak is absolute peak of sfe
+  #sfepeakday is julian day of absolute peak of sfe
+  sfedur=rep(0,hotnum); sfenum=rep(0,hotnum); sfepeak=rep(0,hotnum); sfepeakday=rep(NaN,hotnum); sfemean=rep(NaN,hotnum); 
+  for (h in 1:hotnum){
+    countdur=0; #used to count duration of pulses
+    findmean=0; #used to find mean flow of pulses
+    count=0; #total number of hfp days
+    for (d in 1:nrow(hotflow)){
+      if ((EFC_Param$small[h]<hotflow[d,h+2])&(hotflow[d,h+2]<=EFC_Param$large[h])){#if today is a small food event day
+        if (hotflow[d,h+2]>sfepeak[h]){
+          sfepeak[h]=hotflow[d,h+2];
+          sfepeakday[h]=hotflow[d,2];
+        }
+        findmean=findmean+hotflow[d,h+2];
+        count=count+1;
+        countdur=countdur+1;
+        previous="yes";
+        if (hotflow$cal_day[d]==max(hotflow$cal_day)){#if last day in the year
+          sfenum[h]=sfenum[h]+1;#then add to frequency
+          sfedur[h]=sfedur[h]+countdur;#add to duration total
+        }
+      }
+      if ((EFC_Param$small[h]>=hotflow[d,h+2])|(hotflow[d,h+2]>EFC_Param$large[h])){#if today is not a small food event day
+        if (previous=="yes"){#if the previous day was a high flow pulse day but today isnt 
+          sfenum[h]=sfenum[h]+1;#then add to frequency
+          sfedur[h]=sfedur[h]+countdur;#add to duration total
+          countdur=0;#reset counter for duration of specific event
+        }
+        previous="no";
+      }
+    }
+    sfemean[h]=findmean/count;#find mean flow
+    sfedur[h]=sfedur[h]/sfenum[h];#find mean duration
+  }
+  
+  #!!!!!!large flood events (lfe)
+  #lfemean is mean of lfe days
+  #lfedur is mean duration of lfe
+  #lfenum is frequency of lfe
+  #lfepeak is absolute peak of lfe
+  #lfepeakday is julian day of absolute peak of lfe
+  lfedur=rep(0,hotnum); lfenum=rep(0,hotnum); lfepeak=rep(0,hotnum); lfepeakday=rep(NaN,hotnum); lfemean=rep(NaN,hotnum); 
+  for (h in 1:hotnum){
+    countdur=0; #used to count duration of pulses
+    findmean=0; #used to find mean flow of pulses
+    count=0; #total number of hfp days
+    for (d in 1:nrow(hotflow)){
+      if (EFC_Param$large[h]<hotflow[d,h+2]){#if today is a small food event day
+        if (hotflow[d,h+2]>lfepeak[h]){
+          lfepeak[h]=hotflow[d,h+2];
+          lfepeakday[h]=hotflow[d,2];
+        }
+        findmean=findmean+hotflow[d,h+2];
+        count=count+1;
+        countdur=countdur+1;
+        previous="yes";
+        if (hotflow$cal_day[d]==max(hotflow$cal_day)){#if last day in the year
+          lfenum[h]=lfenum[h]+1;#then add to frequency
+          lfedur[h]=lfedur[h]+countdur;#add to duration total
+        }
+      }
+      if (EFC_Param$large[h]>=hotflow[d,h+2]){#if today is not a small food event day
+        if (previous=="yes"){#if the previous day was a high flow pulse day but today isnt 
+          lfenum[h]=lfenum[h]+1;#then add to frequency
+          lfedur[h]=lfedur[h]+countdur;#add to duration total
+          countdur=0;#reset counter for duration of specific event
+        }
+        previous="no";
+      }
+    }
+    lfemean[h]=findmean/count;#find mean flow
+    lfedur[h]=lfedur[h]/lfenum[h];#find mean duration
+  }
+  
+  hotspotnum=(1:23)
+  if (n==1){
+    EFC<- data.frame(n,hotspotnum,elfenum,elfedur,elfemean,elfepeak,elfepeakday,hfpnum,hfpdur,hfpmean,hfppeak,hfppeakday,sfenum,sfedur,sfemean,sfepeak,sfepeakday,lfenum,lfedur,lfemean,lfepeak,lfepeakday,mmlf)
+    rownames(EFC) <- NULL
+    colnames(EFC)[1:ncol(EFC)] <- c("year","hotspot","elfenum","elfedur","elfemean","elfepeak","elfepeakday","hfpnum","hfpdur","hfpmean","hfppeak","hfppeakday","sfenum","sfedur","sfemean","sfepeak","sfepeakday","lfenum","lfedur","lfemean","lfepeak","lfepeakday","janlow","feblow","marlow","aprlow","maylow","junlow","jullow","auglow","seplow","octlow","novlow","declow")
+  }else{
+    EFCnew<- data.frame(n,hotspotnum,elfenum,elfedur,elfemean,elfepeak,elfepeakday,hfpnum,hfpdur,hfpmean,hfppeak,hfppeakday,sfenum,sfedur,sfemean,sfepeak,sfepeakday,lfenum,lfedur,lfemean,lfepeak,lfepeakday,mmlf)
+    rownames(EFCnew) <- NULL
+    colnames(EFCnew)[1:ncol(EFCnew)] <- c("year","hotspot","elfenum","elfedur","elfemean","elfepeak","elfepeakday","hfpnum","hfpdur","hfpmean","hfppeak","hfppeakday","sfenum","sfedur","sfemean","sfepeak","sfepeakday","lfenum","lfedur","lfemean","lfepeak","lfepeakday","janlow","feblow","marlow","aprlow","maylow","junlow","jullow","auglow","seplow","octlow","novlow","declow")
+    EFC <-rbind(EFC,EFCnew)
+  }
+  
   ############################################################################################################################
-  # Ecosystem
+  # Ecosystem requirements and potential failure to meet
   ############################################################################################################################
   #ecosystem requirements (IHA's)
   IHAreq <- read.csv("IHAreq.csv")
@@ -412,10 +651,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   #monthly flows are currently in m^3/s (montly mean rate)
   #this is a temporary fake file created based on the calculated IHAs -> this will be replaced by the actual data we obtain
   
-  ############################################################################################################################
   #Checking requirements (IHA's) and determining level of insufficiency
-  #if we want to limit which IHA's we care about, then reduce IHAnew to those values only
-  ############################################################################################################################
   hotIHA<-data.frame(matrix(0,ncol = (ncol(IHAnew)-1), nrow = hotnum));#hotIHA contains the IHA information for each hotspot
   hotIHA[,1]=1:hotnum;colnames(hotIHA)[1:ncol(hotIHA)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
   IHAfail<-data.frame(matrix(0,ncol = (ncol(IHAnew)-1), nrow = hotnum));#this stores to what extent IHA values are insufficient (difference from target)
@@ -459,7 +695,7 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   IHAfail_last <-IHAfail;#save this year for next year use (see if sign of insufficiency is same across year counting)
   
   ############################################################################################################################
-  # Now to make decisions based on failures to meet requirements
+  # Ecosystem Decisions
   ############################################################################################################################
   resinternal <- read.csv("resinternal.csv")
   #this file contains (for each hotspot) which UPSTREAM dam within the SAME agent can be called for help (if any) (priotiry given to closest)
@@ -653,95 +889,30 @@ while(n<22) #SWAT simulation period: 22 years - this part returns back to ABM
   write.table(res_save,file="save_Reservoir_by_R.txt", col.names = F, row.names = F, append =T) 
   write.table(hru_out_save,file="save_HRU_FR_by_R.txt", col.names = F, row.names = F, append =T) 
   
+  if (n==22){#for last year of the simulation make and write out summary info
+    crop_mekongsum <- crop_mekong[crop_mekong$HRU_ID==1,c(1,2,4)]
+    #first remove all rows for non rice and colums for hru # and water withdrawl
+      
+    crop_mekong1 <- crop_mekong[crop_mekong$HRU_ID==3,c(1,2,4)]
+    crop_mekongsum["M_Act_yield"] <- crop_mekong1$Act_yield
+    #now add maize
+    
+    crop_mekongsum["Target"] <- New_Eff$TarYields[New_Eff$HRU_ID==1]
+    crop_mekongsum["M_Target"] <- New_Eff$TarYields[New_Eff$HRU_ID==3]
+    #now add targets
+      
+    agentinfo <- rep(ag_sb$Agent_ID,n); crop_mekongsum["Agent_ID"] <- agentinfo; crop_mekongsum <- crop_mekongsum[c(1,7,2,3,4,5,6)]
+    #now add column for agent and rearange
+    
+    hydpow_save["Target"]<- min_hydpow; hydpow_save["Status"]<- readhydpow$Status; 
+  
+    ###########################################################################
+    write.csv(crop_mekongsum, file = "crop_summary.csv",row.names = FALSE)
+    write.csv(hydpow_save, file = "hydropower_summary.csv",row.names = FALSE)
+    write.csv(eco_save, file = "ecosystem_summary2.csv",row.names = FALSE)
+    ##########################################################################
+  }
+  
   file.create("SWAT_flag.txt")
   n<-n+1
 }
-
-################################################################
-while (file.exists("SWAT_flag.txt"))
-{
-}#still need to wait for SWAT to finish or wont have last year of data
-
-############################################################################################################################
-# Creating summary tables (NOTE: SWAT doesnt return to ABM for final year)
-############################################################################################################################
-
-crop_mekong  <- read.table("Crop_Mekong.txt")
-colnames(crop_mekong) <- c("year","SB_ID","HRU_ID","Act_yield","IWW")
-#have to reread final data since what has been read by ABM is only for 21 years (SWAT doesnt return to ABM for final year)
-  
-crop_mekongsum <- crop_mekong[crop_mekong$HRU_ID==1,c(1,2,4)]
-#first remove all rows for non rice and colums for hru # and water withdrawl
-  
-crop_mekong1 <- crop_mekong[crop_mekong$HRU_ID==3,c(1,2,4)]
-crop_mekongsum["M_Act_yield"] <- crop_mekong1$Act_yield
-#now add maize
-
-crop_mekongsum["Target"] <- New_Eff$TarYields[New_Eff$HRU_ID==1]
-crop_mekongsum["M_Target"] <- New_Eff$TarYields[New_Eff$HRU_ID==3]
-#now add targets
-  
-agentinfo <- rep(ag_sb$Agent_ID,n); crop_mekongsum["Agent_ID"] <- agentinfo; crop_mekongsum <- crop_mekongsum[c(1,7,2,3,4,5,6)]
-#now add column for agent and rearange
-  
-#!!!crummy part about not returning to ABM after year 22 is that the hydropower and IHA's have to be calculated for that final year now and added to dataframes
-reservoir_mekong <- read.table("Reservoir_Mekong.txt");colnames(reservoir_mekong)[1:ncol(reservoir_mekong)] <- c("year","cal_day",paste0("Volume_Res",1:resnum),paste0("SurfArea_Res",1:resnum),paste0("Outflow_Res",1:resnum))
-daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:resnum)]/86400;names(daily_res_Q)<-paste0("daily_Q_res",1:resnum);
-daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:resnum)])^res_b+res_c));names(daily_res_head)<-paste0("daily_head_res",1:resnum)
-raw_hydpow <- data.frame(mapply('*',((1000*9.81*daily_res_head*daily_res_Q)/1000000000*24),res_eff));names(raw_hydpow)<-paste0("raw_hydpow_res",1:resnum);raw_hydpow <- as.matrix(raw_hydpow)
-max_hydpow <- matrix(capacity_hydpow,nrow=ncol(raw_hydpow),ncol=nrow(raw_hydpow));max_hydpow <- t(max_hydpow)
-daily_hydpow <- pmin(raw_hydpow,max_hydpow);colnames(daily_hydpow)<-paste0("daily_hydpow_res",1:resnum)
-hydpow <-colSums(daily_hydpow);names(hydpow)<-paste0("hydpow_res",1:resnum)
-nn=rep(n,nrow(readhydpow));resagent<-ag_sb$Agent_ID[ag_sb$SB_ID%in%readhydpow$subbasin..0106.setup.]
-hydpow1<-data.frame(cbind(nn,resagent,readhydpow$Reservoir.name,hydpow));names(hydpow1)<-c("year","Agent_ID","Reservoir","Hydro.Power");
-hydpow_save<-rbind(hydpow_save,hydpow1);hydpow_save["Target"]<- min_hydpow; hydpow_save["Status"]<- readhydpow$Status; 
-##########################################################################################################################################
-#last year of IHA's for ecosystem summary file
-
-flow_mekong <- read.table("Flow_Mekong.txt");colnames(flow_mekong)[1:ncol(flow_mekong)] <- c("year","cal_day",paste0("Flow_SB_",1:(ncol(flow_mekong)-2)))
-columnend<-(sbnum+2); ecoyear<-flow_mekong[which(flow_mekong$year==n),3:columnend];
-jan<-as.vector(colMeans(ecoyear[1:31,]));feb<-as.vector(colMeans(ecoyear[32:59,]));mar<-as.vector(colMeans(ecoyear[60:90,]));apr<-as.vector(colMeans(ecoyear[91:120,]));may<-as.vector(colMeans(ecoyear[121:151,]));jun<-as.vector(colMeans(ecoyear[152:181,]));
-jul<-as.vector(colMeans(ecoyear[182:212,]));aug<-as.vector(colMeans(ecoyear[213:243,]));sep<-as.vector(colMeans(ecoyear[244:273,]));oct<-as.vector(colMeans(ecoyear[274:304,]));nov<-as.vector(colMeans(ecoyear[305:334,]));dec<-as.vector(colMeans(ecoyear[335:365,]));
-day1min<-apply(ecoyear,2,min); day1max<-apply(ecoyear,2,max)
-for (t in seq(1,365,90)){for (s in t:(t+89)){if (s==1){hold90<-colSums(ecoyear[s:(s+89),]);}else{hold90new<-colSums(ecoyear[s:(s+89),]);hold90<-rbind(hold90,hold90new);}}}
-day90max<-apply(hold90[1:276,],2,max);day90min<-apply(hold90[1:276,],2,min)
-for (t in seq(1,365,30)){for (s in t:(t+29)){if (s==1){hold30<-colSums(ecoyear[s:(s+29),]);}else{hold30new<-colSums(ecoyear[s:(s+29),]);hold30<-rbind(hold30,hold30new);}}}
-day30max<-apply(hold30[1:336,],2,max);day30min<-apply(hold30[1:336,],2,min)
-for (t in seq(1,365,7)){for (s in t:(t+6)){if (s==1){hold7<-colSums(ecoyear[s:(s+6),]);}else{hold7new<-colSums(ecoyear[s:(s+6),]);hold7<-rbind(hold7,hold7new);}}}
-day7max<-apply(hold7[1:359,],2,max);day7min<-apply(hold7[1:359,],2,min)
-for (t in seq(1,365,3)){for (s in t:(t+2)){if (s==1){hold3<-colSums(ecoyear[s:(s+2),]);}else{hold3new<-colSums(ecoyear[s:(s+2),]);hold3<-rbind(hold3,hold3new)}}}
-day3max<-apply(hold3[1:363,],2,max);day3min<-apply(hold3[1:363,],2,min);mindate<-apply(ecoyear,2,which.min); maxdate<-apply(ecoyear,2,which.max)
-highpulse<-apply(ecoyear,2,max)*.8; lowpulse<-apply(ecoyear,2,max)*.2; #high and low pulse threshold NEED to be taken from historic data once obtained
-counthigh<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear));countlow<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear))#reinitialize each year
-for (i in 1:ncol(ecoyear)){counthigh[,i]<-ecoyear[,i]>highpulse[i];countlow[,i]<-ecoyear[,i]>lowpulse[i];}
-hipulse_no<-apply(counthigh,2,sum); lopulse_no<-apply(countlow,2,sum)
-hipulse_dur<-apply(counthigh,2,function(x){hirle<-rle(x);mean(hirle$lengths[hirle$values==TRUE])});lopulse_dur<-apply(countlow,2,function(x){lorle<-rle(x);mean(lorle$lengths[lorle$values==TRUE])})
-ecochange1<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));ecochange2<-data.frame(diff(as.matrix(ecoyear[,]),lag=1));
-ecochange1[ecochange1<=0]<-NA; ecochange2[ecochange2>=0]<-NA;
-mean_increase <- colMeans(ecochange1,na.rm=TRUE); mean_decrease <- colMeans(ecochange2,na.rm=TRUE);
-number_rises <- apply(ecochange1, 2, function(x) length(which(!is.na(x)))); number_falls <- apply(ecochange2, 2, function(x) length(which(!is.na(x))))
-if (n==1){
-  IHA <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
-  IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
-  colnames(IHA)[1:ncol(IHA)] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
-  rownames(IHA) <- NULL
-  colnames(IHAnew)[1:ncol(IHA)] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
-  rownames(IHAnew) <- NULL
-}else{
-  IHAnew <- data.frame(n,ag_sb$SB_ID,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec,day1min,day1max,day3min,day3max,day7min,day7max,day30min,day30max,day90min,day90max,mindate,maxdate,hipulse_no,lopulse_no,hipulse_dur,lopulse_dur,mean_increase,mean_decrease,number_rises,number_falls)
-  colnames(IHAnew)[1:ncol(IHAnew)] <- c("year","sub_ID","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls")
-  rownames(IHAnew) <- NULL;IHA <- rbind(IHA,IHAnew);}
-hotIHA<-data.frame(matrix(0,ncol = (ncol(IHAnew)-1), nrow = hotnum));#hotIHA contains the IHA information for each hotspot
-hotIHA[,1]=1:hotnum;colnames(hotIHA)[1:ncol(hotIHA)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
-IHAfail<-data.frame(matrix(0,ncol = (ncol(IHAnew)-1), nrow = hotnum));#this stores to what extent IHA values are insufficient (difference from target)
-IHAfail[,1]=1:hotnum;colnames(IHAfail)[1:ncol(IHAfail)]<-c("hotspot","jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec","1daymin","1daymax","3daymin","3daymax","7daymin","7daymax","30daymin","30daymax","90daymin","90daymax","dayofmin","dayofmax","hipulse_no","lopulse_no","hipulse_dur","lopulse_dur","ave_increa","ave_decrea","No. Rises","No. Falls");
-for (h in 1:hotnum){countnum=0;for (s in 1:sbnum){if (ag_sb$Hotspot_Number[s]==h){countnum=countnum+1;hotIHA[h,2:ncol(hotIHA)]=hotIHA[h,2:ncol(hotIHA)]+IHAnew[s,3:ncol(IHAnew)];}};hotIHA[h,2:ncol(hotIHA)]=hotIHA[h,2:ncol(hotIHA)]/countnum;}#this takes average of multiple subbasin IHA's
-nn<-rep(n,hotnum);eco_save_new<-cbind(nn,hotIHA,IHAreq[,2:ncol(IHAreq)]);
-colnames(eco_save_new)[1:ncol(eco_save_new)]<-c("year","hotspot","jan_calc","feb_calc","mar_calc","apr_calc","may_calc","jun_calc","jul_calc","aug_calc","sep_calc","oct_calc","nov_calc","dec_calc","1daymin_calc","1daymax_calc","3daymin_calc","3daymax_calc","7daymin_calc","7daymax_calc","30daymin_calc","30daymax_calc","90daymin_calc","90daymax_calc","dayofmin_calc","dayofmax_calc","hipulse_no_calc","lopulse_no_calc","hipulse_dur_calc","lopulse_dur_calc","ave_increa_calc","ave_decrea_calc","No. Rises_calc","No. Falls_calc","jan_tar","feb_tar","mar_tar","apr_tar","may_tar","jun_tar","jul_tar","aug_tar","sep_tar","oct_tar","nov_tar","dec_tar","1daymin_tar","1daymax_tar","3daymin_tar","3daymax_tar","7daymin_tar","7daymax_tar","30daymin_tar","30daymax_tar","90daymin_tar","90daymax_tar","dayofmin_tar","dayofmax_tar","hipulse_no_tar","lopulse_no_tar","hipulse_dur_tar","lopulse_dur_tar","ave_increa_tar","ave_decrea_tar","No. Rises_tar","No. Falls_tar","jan_allowed_dev","feb_allowed_dev","mar_allowed_dev","apr_allowed_dev","may_allowed_dev","jun_allowed_dev","jul_allowed_dev","aug_allowed_dev","sep_allowed_dev","oct_allowed_dev","nov_allowed_dev","dec_allowed_dev","1daymin_allowed_dev","1daymax_allowed_dev","3daymin_allowed_dev","3daymax_allowed_dev","7daymin_allowed_dev","7daymax_allowed_dev","30daymin_allowed_dev","30daymax_allowed_dev","90daymin_allowed_dev","90daymax_allowed_dev","dayofmin_allowed_dev","dayofmax_allowed_dev","hipulse_no_allowed_dev","lopulse_no_allowed_dev","hipulse_dur_allowed_dev","lopulse_dur_allowed_dev","ave_increa_allowed_dev","ave_decrea_allowed_dev","No. Rises_allowed_dev","No. Falls_allowed_dev");
-if(n==1){eco_save<-eco_save_new}else{eco_save<-rbind(eco_save,eco_save_new);}
-
-###########################################################################
-write.csv(crop_mekongsum, file = "crop_summary.csv",row.names = FALSE)
-write.csv(hydpow_save, file = "hydropower_summary.csv",row.names = FALSE)
-write.csv(eco_save, file = "ecosystem_summary2.csv",row.names = FALSE)
-##########################################################################
