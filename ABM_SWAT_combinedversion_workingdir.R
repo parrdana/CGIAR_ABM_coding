@@ -46,7 +46,7 @@ minout <- res_ini[,31:42]#min outlfow
 #Need absolute thresholds for max and min outflow for decision changes
 maxoutthres <-res_ini[,19:30]*0.5;
 minoutthres <- res_ini[,31:42]+100000;
-#!!!! warning !!!! these will need to be set more realistically (perhaps off of average monthly outflows once calibrated)
+#!!!! warning !!!! these will need to be set more realistically (perhaps off a % increase of average monthly outflows once calibrated)
 
 #data needed for hydropower calculation
 readhydpow <- read.csv("reservoir_data_for_ABM_v2.csv",stringsAsFactors=FALSE)# mean annual energy (GW)
@@ -80,6 +80,8 @@ ndays<-matrix(0,ncol = 12, nrow = 2);ndays[1,1]<-1;ndays[2,1]<-31;ndays[1,2]<-32
 ndays[1,7]<-182;ndays[2,7]<-212;ndays[1,8]<-213;ndays[2,8]<-243;ndays[1,9]<-244;ndays[2,9]<-273;ndays[1,10]<-274;ndays[2,10]<-304;ndays[1,11]<-305;ndays[2,11]<-334;ndays[1,12]<-335;ndays[2,12]<-365;
 
 #crop yield targets based on SPAM data and zonal statistics
+#!!!!!After SWAT calibration making sure the SBs with yeild and target yeild match
+#!!!!!should probably be one of the first priorites
 cy_tar <- read.csv("TargetYields_rice_maize_v2.csv") %>% rename(SB_ID = subbasin) %>% #target crop yields
   gather(key=Crop,value=TarYields,-SB_ID) %>% 
   separate(Crop,into = c("CName","Unit"),sep = "_") %>% 
@@ -207,23 +209,29 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
   #if (n>3){min_hydpow <- min_hydpow*1.07}#increase 7% per year (first year of simulation is year 3)
   #power demands  expected to increase by about 7% per year between (2010 and 2030)
   
-  daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:resnum)]/86400;
+  #!!!Pre SWAT calibartion most of the volumes and flows are insane (10^13m/s or 0 volume) so Q and Head are unrealistic 
+  #!!!but they are kept to not exceeding daily capacity
+  #!!!After calibration - making sure these equations are giving realistic values for hydropower compared with targets and 
+  #!!!daily capacities should probably be one of the first priorities)
+  #!!!(e.g. is raw_hydpow always way over max_hydpower(capacity) like it is now?)
+  
+  daily_res_Q <- reservoir_mekong[which(reservoir_mekong$year==n),paste0("Outflow_Res",1:resnum)];
   names(daily_res_Q)<-paste0("daily_Q_res",1:resnum)
-  #daily outflow for each reservoir converted to m3/s from m3/day
+  #daily outflow for each reservoir (m^3/s)
 
   daily_res_head <- as.data.frame(t(res_a*t(reservoir_mekong[which(reservoir_mekong$year==n),paste0("Volume_Res",1:resnum)])^res_b+res_c));
   names(daily_res_head)<-paste0("daily_head_res",1:resnum)
-  #daily mean head for each reservoir calculated from storage and empircal data
+  #daily mean head (m) for each reservoir calculated from volume storage and empircal data
   
-  #hydpow = u*rho*g*H*Q/1,000,000,000 for GW (kgm^2/s^3*10^9) then *24 to GWh
+  #hydpow is using equation: = u*rho*g*H*Q/1,000,000,000 for GW (kgm^2/s^3*10^9) then *24 to GWh
+  #Q in m^3/s and H in m, rho 1000kg/m^3
   #u = efficiency (in general 0.8) but taken from data if exists
   raw_hydpow <- data.frame(mapply('*',((1000*9.81*daily_res_head*daily_res_Q)/1000000000*24),res_eff));
   names(raw_hydpow)<-paste0("raw_hydpow_res",1:resnum)
   raw_hydpow <- as.matrix(raw_hydpow)
   #raw hydropower without accounting for capacity
   
-  max_hydpow <- matrix(capacity_hydpow,nrow=ncol(raw_hydpow),ncol=nrow(raw_hydpow))
-  max_hydpow <- t(max_hydpow)
+  max_hydpow <- matrix(capacity_hydpow,nrow=ncol(raw_hydpow),ncol=nrow(raw_hydpow));max_hydpow <- t(max_hydpow)
   daily_hydpow <- pmin(raw_hydpow,max_hydpow)
   #need two matrices to use pmindaily
   colnames(daily_hydpow)<-paste0("daily_hydpow_res",1:resnum)
@@ -267,19 +275,25 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
         hptrig[r,10]<-hptrig[r,9];hptrig[r,9]<-hptrig[r,8];hptrig[r,8]<-hptrig[r,7];hptrig[r,7]<-hptrig[r,6];hptrig[r,6]<-hptrig[r,5];hptrig[r,5]<-hptrig[r,4];hptrig[r,4]<-hptrig[r,3];hptrig[r,3]<-hptrig[r,2];hptrig[r,2]<-hptrig[r,1];hptrig[r,1]<-TRUE;
         if (all(hptrig[])==TRUE & hptrigcount[r]>=10){#if hydropower generated is less than the minimum over last 10 years 
           #decrease number of days required to reach target and target storage during dry season
-          starg[r,-(2:5)] <- starg[r,-(2:5)]*0.7
+          starg[r,-(1:4)] <- starg[r,-(1:4)]*0.7
+          #!!!! note: dry season is defined differently in different texts - here jan trhough apr is used
+          #!!!! another approach could be to decrease target throughout the year but to different extents
+          #!!!! for different seasons (dry,transition 1, flood, transition 2) e.g.:
+          #!!!! starg[r,-(1:4)] <- starg[r,-(1:4)]*0.7; starg[r,-(5:6)] <- starg[r,-(5:6)]*0.85;
+          #!!!! starg[r,-(7:10)] <- starg[r,-(7:10)]*0.9; starg[r,-(11:12)] <- starg[r,-(11:12)]*0.85;
+          #!!!! if changing target storage is not accomplishing enough, could increase minflow instead/as well
           ndtargr[r] <- ndtargr[r]-4
           hptrigcount[r]=0#reset hydropower trigger count after changing reservoir managemnt practices to ensure it will not be changed for at least 10 more years (if ever again)
           
         }else if (sum(hptrig[r,])==9 & hptrigcount[r]>=10){#if hydropower generated is less than the minimum for 9 of last 10 years
           #decrease number of days required to reach target and target storage to a lesser extent than for 10/10 years
-          starg[r,-(2:5)] <- starg[r,-(2:5)]*0.8
+          starg[r,-(1:4)] <- starg[r,-(1:4)]*0.8
           ndtargr[r] <- ndtargr[r]-3
           hptrigcount[r]=0#reset hydropower trigger count
           
         }else if (sum(hptrig[r,])==8 & hptrigcount[r]>=10){#if hydropower generated is less than the minimum for 8 of last 10 years
           #decrease number of days required to reach target and target storage to a lesser extent than for 9/10 years
-          starg[r,-(2:5)] <- starg[r,-(2:5)]*0.9
+          starg[r,-(1:4)] <- starg[r,-(1:4)]*0.9
           ndtargr[r] <- ndtargr[r]-2
           hptrigcount[r]=0#reset hydropower trigger count
           
@@ -302,7 +316,7 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
   #OPTION 2:increase irr_eff in all subbasins in that agent
   cap<- NULL
   for (i in 1:nrow(New_Eff)){
-    cap[i] <- irr_minmax$max_irr_eff[irr_minmax$SB_ID==New_Eff$SB_ID[i]]
+    cap[i] <- irr_minmax$max_irr_eff[irr_minmax$SB_ID==New_Eff$SB_ID[i]]#cap is max irr eff as defined by web users
     ifelse(New_Eff$Agent_ID[i] %in% New_Eff$Agent_ID[New_Eff$hpflag==1],
            New_Eff$New_Irri_eff[i] <- min(cap[i],New_Eff$Irri_eff[i]*1.1),
            New_Eff$New_Irri_eff[i] <-New_Eff$Irri_eff[i])
@@ -311,6 +325,7 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
       }
   
   #adjust irr eff in New_Eff for later use (above) and in IRR_eff_by_R for writing out (below)
+  #this is the last time irr_eff is altered before being written to irr_eff.R (before Dana left)
   final_Irri_eff<-left_join(crop_hru,New_Eff,by=c("SB_ID","HRU_ID")) %>%   select(New_Irri_eff) %>% .$New_Irri_eff
   final_Irri_eff[is.na(final_Irri_eff)==T] <- 0
   IRR_eff_by_R<-mutate(IRR_eff_by_R,New_Irri_eff =final_Irri_eff)
@@ -319,7 +334,7 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
   #Post-calculation for (From SWAT output) ecosystem services
   #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   
-  #Dana's note: any parameter that is not desirable can be removed but all IHA's and EFC's are calculated now
+  #Dana's note: any parameter that is not desirable or necessary can be removed
   
   ############ ecosystem requirements - IHAs !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   columnend<-(sbnum+2); ecoyear<-flow_mekong[which(flow_mekong$year==n),3:columnend];
@@ -387,8 +402,9 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
   #Timing (IHA 23:24 - day of 1-day min and max)
   mindate<-apply(ecoyear,2,which.min); maxdate<-apply(ecoyear,2,which.max)
   
+  #!!!!! I think these IHA's are made redundant by the EFC's and can be removed (high pulse low pulse) 
+  #!!!!! Besides Eric says "I have no idea what to do with this; do not keep"
   #Magnitude Frequency Duration (IHA 25:28 - number of low/high pulses, mean duration of low/high pulses)
-  # to quantify these we need to establish thresholds for what constitutes a high or low pulse- e.g. 75percentile,25percentile of values over long period of time (pre-simulation)
   highpulse<-apply(ecoyear,2,max)*.8; lowpulse<-apply(ecoyear,2,max)*.2; #high and low pulse threshold NEED to be taken from historic data once obtained
   counthigh<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear));countlow<-matrix(rep(0),nrow(ecoyear),ncol(ecoyear))#reinitialize each year
   for (i in 1:ncol(ecoyear)){
@@ -396,7 +412,7 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
   }
   hipulse_no<-apply(counthigh,2,sum); lopulse_no<-apply(countlow,2,sum)
   hipulse_dur<-apply(counthigh,2,function(x){
-    hirle<-rle(x);mean(hirle$lengths[hirle$values==TRUE])})
+    hirle<-rle(x);mean(hirle$lengths[hirle$values==TRUE])})#rle computes the lengths and values of runs of equal values in a vector
   lopulse_dur<-apply(countlow,2,function(x){
     lorle<-rle(x);mean(lorle$lengths[lorle$values==TRUE])})
     
