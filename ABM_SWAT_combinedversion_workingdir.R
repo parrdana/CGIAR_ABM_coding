@@ -275,25 +275,25 @@ while(n<23) #SWAT simulation period: 22 years - this part returns back to ABM
         hptrig[r,10]<-hptrig[r,9];hptrig[r,9]<-hptrig[r,8];hptrig[r,8]<-hptrig[r,7];hptrig[r,7]<-hptrig[r,6];hptrig[r,6]<-hptrig[r,5];hptrig[r,5]<-hptrig[r,4];hptrig[r,4]<-hptrig[r,3];hptrig[r,3]<-hptrig[r,2];hptrig[r,2]<-hptrig[r,1];hptrig[r,1]<-TRUE;
         if (all(hptrig[])==TRUE & hptrigcount[r]>=10){#if hydropower generated is less than the minimum over last 10 years 
           #decrease number of days required to reach target and target storage during dry season
-          starg[r,-(1:4)] <- starg[r,-(1:4)]*0.7
+          starg[r,(1:4)] <- starg[r,(1:4)]*0.7
           #!!!! note: dry season is defined differently in different texts - here jan trhough apr is used
           #!!!! another approach could be to decrease target throughout the year but to different extents
           #!!!! for different seasons (dry,transition 1, flood, transition 2) e.g.:
-          #!!!! starg[r,-(1:4)] <- starg[r,-(1:4)]*0.7; starg[r,-(5:6)] <- starg[r,-(5:6)]*0.85;
-          #!!!! starg[r,-(7:10)] <- starg[r,-(7:10)]*0.9; starg[r,-(11:12)] <- starg[r,-(11:12)]*0.85;
+          #!!!! starg[r,(1:4)] <- starg[r,(1:4)]*0.7; starg[r,(5:6)] <- starg[r,(5:6)]*0.85;
+          #!!!! starg[r,(7:10)] <- starg[r,(7:10)]*0.9; starg[r,(11:12)] <- starg[r,(11:12)]*0.85;
           #!!!! if changing target storage is not accomplishing enough, could increase minflow instead/as well
           ndtargr[r] <- ndtargr[r]-4
           hptrigcount[r]=0#reset hydropower trigger count after changing reservoir managemnt practices to ensure it will not be changed for at least 10 more years (if ever again)
           
         }else if (sum(hptrig[r,])==9 & hptrigcount[r]>=10){#if hydropower generated is less than the minimum for 9 of last 10 years
           #decrease number of days required to reach target and target storage to a lesser extent than for 10/10 years
-          starg[r,-(1:4)] <- starg[r,-(1:4)]*0.8
+          starg[r,(1:4)] <- starg[r,(1:4)]*0.8
           ndtargr[r] <- ndtargr[r]-3
           hptrigcount[r]=0#reset hydropower trigger count
           
         }else if (sum(hptrig[r,])==8 & hptrigcount[r]>=10){#if hydropower generated is less than the minimum for 8 of last 10 years
           #decrease number of days required to reach target and target storage to a lesser extent than for 9/10 years
-          starg[r,-(1:4)] <- starg[r,-(1:4)]*0.9
+          starg[r,(1:4)] <- starg[r,(1:4)]*0.9
           ndtargr[r] <- ndtargr[r]-2
           hptrigcount[r]=0#reset hydropower trigger count
           
